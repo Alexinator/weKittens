@@ -1,0 +1,158 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2011
+ * Author: Kevin Pinte
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+
+/**
+ * Provides unittests for AT wrapper for java.util.Vector
+ *
+ */
+
+import /.at.collections.java.vector;
+import ~.traits.util;
+
+
+def VectorTestModule := object: {
+
+
+	def VectorTest := extend: /.at.unit.test.UnitTest.new("VectorTest") with: {
+	
+		def [a, b, c] := [nil, nil, nil];
+		
+		def setUp() {
+			def vt[3] { Vector.new() };
+			[a, b, c] := vt;
+		};
+		
+		def tearDown() {
+			[a, b, c].each: { |v| v.clear() };
+		};
+		
+		def testAddElement() {
+			a.addAll([1,3,4]);
+			a.addElement(42);
+			self.assertEquals(a.size(), 4);
+			self.assertEquals(a[3], 42);
+		};
+	
+		def testClone() {
+			a.addAll([1,3,4]);
+			b := a.clone();
+			b.addAll([9,8,7]);
+			self.assertEquals(a.size(), 3);
+			self.assertEquals(b.size(), 6);
+			self.assertEquals(b[4], 8);
+		};
+		
+		def testCopyInto() {
+			def t[4] { nil };
+			a.addAll([42,43,44,45]);
+			a.copyInto(t);
+			self.assertEquals(a[0], t[1]);
+			self.assertEquals(a[1], t[2]);
+			self.assertEquals(a[2], t[3]);
+			self.assertEquals(a[3], t[4]);
+		};
+		
+		def testElementAt() {
+			a.addAll([42,43,44,45]);
+			self.assertEquals(a.elementAt(1), 43);
+		};
+		
+		def testElements() {
+			a.addAll([42,43,44,45]);
+			def es := a.elements();
+			es.nextElement();
+			es.nextElement();
+			def r := es.nextElement();
+			self.assertEquals(r, 44);
+			es := a.elements();
+			def et := [];
+			es.each: { |e|
+				et := et + [e];
+			};
+			self.assertTrue(sameElementsInOrder(a.toTable(), et));
+		};
+	
+		def testFirstElement() {
+			a.addAll([42,43,44,45]);
+			self.assertEquals(a.firstElement(), 42);
+		};
+		
+		def testIndexOfFrom() {
+			a.addAll([1,2,3,42,4,5,6,42,7,8,9,42]);
+			self.assertEquals(a.indexOfFrom(42, 4), 7);
+		};
+		
+		def testInsertElementAt() {
+			a.addAll([1,2,3,4,5]);
+			a.insertElementAt(42, 2);
+			self.assertEquals(a[2], 42);
+			self.assertEquals(a[3], 3);
+		};
+		
+		def testLastElement() {
+			a.addAll([1,2,3,4,5]);
+			self.assertEquals(a.lastElement(), 5);
+		};
+		
+		def testLastIndexOfBefore() {
+			a.addAll([42,1,2,3,42,4,5,6,42,7,8,9]);
+			self.assertEquals(a.lastIndexOfBefore(42, 7), 4);
+		};
+	
+		def testRemoveAllElements() {
+			a.addAll([1,2,3,4,5]);
+			a.removeAllElements();
+			self.assertTrue(a.isEmpty());
+		};
+		
+		def testRemoveElement() {
+			a.addAll([1,2,42,3,4,42,5]);
+			self.assertTrue(a.removeElement(42));
+			self.assertFalse(a.removeElement(43));
+			self.assertEquals(a.size(), 6);
+		};
+		
+		def testRemoveElementAt() {
+			a.addAll([1,2,42,3,4,5]);
+			a.removeElementAt(2);
+			self.assertFalse(a.contains(42));
+			self.assertEquals(a[2], 3);
+		};
+		
+		def testSetElementAt() {
+			a.addAll([1,2,3,4,5,6,7,8,9]);
+			a.setElementAt(42, 3);
+			self.assertEquals(a[3], 42);
+		};
+
+	
+	};
+
+};
+
+VectorTestModule;

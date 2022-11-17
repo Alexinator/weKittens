@@ -1,0 +1,705 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/* 
+ * This module implements revised ambient references where message delivery
+ * policies are expressed at the messaging level rather than at the
+ * reference level.
+ *
+ * An ambient reference is a time, synchronisation and space-decoupled reference.
+ * It extends far references with anonymous and group communication.
+ *  
+ * An ambient reference does not refer to one specific object, but rather
+ * to a set of objects, known as its reach. The reach can be described
+ * by means of a type tag or protocol (and optionally a filter).
+ * The filter MUST be serialisable, as it is sent to remote clients for remote evaluation!
+ *
+ * Messages can be sent to one or all objects in range.
+ * Messages can be buffered such that they can be sent to objects
+ * that enter the ambient reference's range at a later point in time.
+ * Such buffered messages can be annotated with an expiration period
+ * such that they can be eventually removed.
+ *
+ * An ambient reference can be considered a little publish/subscribe
+ * engine of its own. The reference can be used by objects to
+ * publish messages into the environment. In order to receive such
+ * messages, objects must register themselves by declaring themselves
+ * to be 'in range' of the appropriate ambient reference.
+ *
+ * An Ambient Reference denotes an abstract set of proximate objects.
+ *
+ * It supports different kinds of messaging strategies:
+ * - message arity:
+ *  - @One: choose a single receiver from the set, returns future [default]
+ *  - @All: broadcast msg to all receivers in set, returns multifuture
+ * - message lifetime:
+ *  - @Instant: potential receivers are the current principals only,
+ *     if no match message is lost.
+ *  - @Transient(timeout): potential receivers are current principals +
+ *     all principals in scope between now and the timeout period.
+ *     If no match, buffer message until timeout.
+ *  - @Sustain: potential receivers are the current principals or any other principal
+ *     joining later. Message can be retracted explicitly via its future. [default]
+ * - message reply destination:
+ *  - @Reply: attaches a future to the message to consume result(s) [default]
+ *  - @Oneway: no return values are required
+ *  - @Due(timeout): attaches a future to the message which, after it has been sent
+ *    to one or more receivers, may time out. Note that the timeout period only starts
+ *    when the message has an actual receiver, not when it is sent to the AR itself.
+ *
+ *  - @Expires(timeout): a combination of @Transient(timeout) and @Due(timeout)
+ *    But not the same as just combining these. It sets the timeout period of each outgoing
+ *    message to (timeout - (time_transmitted - time_sent)), meaning that the longer it
+ *    took to discover a receiver, the less time the future gets to wait for the reply.
+ *
+ * Defaults can be changed at the reference level.
+ * Every message send to an ambient reference returns a 'handle' object which
+ * can be used to 'retract' the message send (by invoking its cancel method).
+ * This is useful for explicitly stopping @Sustain message sends.
+ *
+ * Useful operations:
+ * - snapshot: AR -> table of far refs
+ *
+ * Objects are exported:
+ * - by Type or protocol
+ * - by Type or protocol with properties
+ *
+ * To be investigated:
+ * - dealing with 'dropped' or 'lost' messages: e.g. @Instant + @Reply and no one in range -> ?
+ * - for @One messaging, consider a ranking policy to determine the most 'suitable' service in range.
+ * - a 'metaobject protocol' to enable custom attributes (or just a more open implementation)
+ *
+ * Implementation-wise:
+ * Important optimization: change the MOP of createMessage to return a residual function
+ * Then, using partial evaluation, we can construct an optimized message constructor
+ * that attaches the different types as indices into a table for quick dispatch
+ * ('virtual function tables' for AR messages via partial evaluation!)
+ * => would also be useful for futures! @Due,@Oneway,@FutureMessage processing
+ *
+ * @author tvcutsem
+ */
+
+def Util := /.at.support.util;
+def FuturesModule := /.at.lang.futures;
+def MFuturesModule := /.at.lang.multifutures;
+def OneWayMessage := FuturesModule.OneWayMessage;
+def ProtocolM := /.at.lang.structuraltypes;
+
+import /.at.support.timer;
+import /.at.lang.firstclassrefs;
+
+deftype IllegalAnnotation <: /.at.lang.types.Exception;
+def XIllegalAnnotation := /.at.lang.exceptions.createException(IllegalAnnotation);
+
+deftype ARAnnotation;
+
+deftype MsgArity <: ARAnnotation;
+deftype One <: MsgArity;
+deftype All <: MsgArity;
+
+deftype MsgDiscoveryLifetime <: ARAnnotation;
+deftype Instant <: MsgDiscoveryLifetime;
+deftype TransientT <: MsgDiscoveryLifetime;
+deftype Sustain <: MsgDiscoveryLifetime;
+
+def Transient(period) {
+	extend: TransientT with: { |period|
+		def ==(other) { super == other };
+	} taggedAs: [/.at.lang.types.Isolate, /.at.lang.types.TypeTag ];
+};
+
+deftype MsgCommunicationLifetime <: ARAnnotation;
+deftype Oneway <: MsgCommunicationLifetime;
+deftype Twoway <: MsgCommunicationLifetime;
+deftype Reply <: Twoway;
+deftype DueT <: Twoway;
+
+def Due(timeout) {
+	extend: DueT with: { |timeout|
+		def ==(other) { super == other };
+	} taggedAs: [/.at.lang.types.Isolate, /.at.lang.types.TypeTag ];
+};
+
+deftype Expirable <: TransientT, DueT;
+def Expires(timeout) {
+	extend: Expirable with: { |timeout|
+		def ==(other) { super == other };
+	} taggedAs: [/.at.lang.types.Isolate, /.at.lang.types.TypeTag ];
+};
+
+def extendWithHandle(msg, handle) { extend: msg with: {|handle|} };
+
+def AmbientRefsModule(ARImplModule := /.at.discovery.ar_extensional_impl) {
+	
+	// a pass-by-copy object that resolves to the correct implementation module when deserialised
+	def ARImplModuleCapsule := ARImplModule.capsule;
+	
+	def arityTraitFor(annotation) {
+	  // ARITY = ONE | ALL
+		if: (annotation.isSubtypeOf(One)) then: {
+			ARImplModule.TOne;
+		} else: {
+			if: (annotation.isSubtypeOf(All)) then: {
+				ARImplModule.TAll;
+			} else: {
+			  raise: XIllegalAnnotation.new("Illegal arity annotation: " + annotation);
+			}
+		};
+	};
+
+	def commLTTraitFor(annotation) {
+		// REPLY = DUE | ONEWAY | FUTURE
+		if: (annotation.isSubtypeOf(Oneway)) then: {
+			TOneway;
+		} else: {
+			if: (annotation.isSubtypeOf(DueT)) then: {
+				makeTDue(annotation.timeout);
+			} else: {
+				if: (annotation.isSubtypeOf(Reply)) then: {
+					TReply;
+				} else: {
+				  raise: XIllegalAnnotation.new("Illegal commLT annotation: " + annotation);				
+				}
+			}
+		};
+	};
+
+	def discLTTraitFor(annotation) {
+		// LIFETIME = INSTANT | TRANSIENT | SUSTAINABLE
+		if: (annotation.isSubtypeOf(Instant)) then: {
+			ARImplModule.TInstant;
+		} else: {
+			if: (annotation.isSubtypeOf(TransientT)) then: {
+				ARImplModule.makeTTransient(annotation.period)
+			} else: {
+				if: (annotation.isSubtypeOf(Sustain)) then: {
+					ARImplModule.TSustain;
+				} else: {
+				  raise: XIllegalAnnotation.new("Illegal discLT annotation: " + annotation);				
+				}
+			}
+		};
+	};
+	
+	def createHandler(msg, dfltArityType, dfltLifetimeType, dfltReplyType) {
+		def ArityTrait := arityTraitFor( (is: msg taggedAs: MsgArity).ifTrue: {
+		  Util.getAnnotationOfType(msg, MsgArity);
+		} ifFalse: { dfltArityType });
+
+		def CommLTTrait;
+		def DiscLTTrait;
+
+		// EXPIRABLE => LIFETIME = TRANSIENT AND REPLY = DUE
+		if: (is: msg taggedAs: Expirable) then: {
+			def ann := Util.getAnnotationOfType(msg, Expirable);
+			DiscLTTrait := makeTExpires(ann.timeout);
+			CommLTTrait := nil;
+		} else: {
+			DiscLTTrait := discLTTraitFor((is: msg taggedAs: MsgDiscoveryLifetime).ifTrue: {
+				Util.getAnnotationOfType(msg, MsgDiscoveryLifetime);
+			} ifFalse: { dfltLifetimeType });
+
+			CommLTTrait := commLTTraitFor((is: msg taggedAs: MsgCommunicationLifetime).ifTrue: {
+				Util.getAnnotationOfType(msg, MsgCommunicationLifetime);
+			} ifFalse: { dfltReplyType });
+		};
+
+		// perform trait composition to construct the handler
+		object: {
+		  import ArityTrait;
+		  import CommLTTrait;
+		  import DiscLTTrait;
+	  };
+	};
+
+	def TOneway := object: {
+		def attachFuture(msg) { [nil,msg] };
+	  def discoveryStopped(msg) { /* do nothing */ };
+	};
+
+	def TReply := object: {
+		def attachFuture(msg) {
+			def [fut, res] := self.createFuture(); // dispatch TArity
+			[fut, FuturesModule.futurize(msg, fut) ];
+		};
+	  def discoveryStopped(msg) { /* do nothing */ };
+	};
+
+	def makeTDue(initDuePeriod) {
+		extend: TReply with: {
+			def timeLeftForReply(msg) { initDuePeriod };
+		  def discoveryStopped(msg) {
+			  when: self.timeLeftForReply(msg) elapsed: {
+			    (msg.handle.future)<-becomeResolved()@[OneWayMessage,MetaMessage];
+		    };
+		  };
+	  };
+	};
+
+	def makeTExpires(expPeriod) {
+		object: {
+			import ARImplModule.makeTTransient(expPeriod);
+			import makeTDue(expPeriod) exclude timeLeftForReply;
+
+			def timeLeftForReply(msg) {
+				self.transientPeriod - (now() - msg.handle.sendTime);
+			};
+		}
+	};
+
+	deftype AmbientReference;
+
+	def makeAmbientReference(typetagOrProtocol,
+		                       filter,
+		                       defaultArity,
+		                       defaultLifetime,
+		                       defaultReply) {
+
+    def extendedMirror;
+		def commonMirror := mirror: {
+	    import TEventualRef;
+
+			// == provide required methods for TEventualRef trait ==
+
+			def intercept(message) {
+				def handler := createHandler(message,defaultArity,defaultLifetime,defaultReply);
+
+        def [fut, newMsg] := handler.attachFuture(message);
+				def registration;
+			  def handle := object: {
+				  def future := fut;
+				  def sendTime := now();
+				  def cancel() { registration.cancel() };
+			  };
+
+				registration := handler.dispatch(extendedMirror, extendWithHandle(newMsg, handle));
+			  handle // value of ambient message send is always a handle			
+			};
+
+			def toString() {
+			  "ambient:"+typetagOrProtocol.typeName;
+			};
+
+			def transportStrategy :=
+			  { |ARImplModuleCapsule,typetagOrProtocol,filter,defaultArity,defaultLifetime,defaultReply|
+				  // when arriving at the remote host, create a new local ambient reference
+				  /.at.lang.ambientrefs(ARImplModuleCapsule).ambient: typetagOrProtocol
+																  where: filter
+																  withArity: defaultArity
+																  withLifetime: defaultLifetime
+																  withReply: defaultReply };
+		}; // end mirror
+	  extendedMirror := ARImplModule.extendAmbientReference(commonMirror, typetagOrProtocol, filter);
+		object: { } taggedAs: [ AmbientReference ] mirroredBy: extendedMirror;
+	}; // end makeAmbientReference
+
+	def dfltFilter := script: { |o| true } carrying: [];
+	def dfltArity := One;
+	def dfltLifetime := Sustain;
+	def dfltReply := Oneway;
+	
+	// the public interface of the AR language module
+	def PublicInterface := object: {
+	
+		def IllegalAnnotation := IllegalAnnotation;
+	
+	  def One := One;
+	  def All := All;
+
+	  def Instant := Instant;
+		def Transient := &Transient;
+		def Sustain := Sustain;
+
+		def Reply := Reply;	
+	  def Due := &Due;
+		def Oneway := Oneway;
+
+		def Expires := &Expires;
+		
+		// allow exporting an object together with a set of properties
+		def export: serviceObject as: typetagOrProtocol with: closure {
+			def attributes := isolate: closure;
+			ARImplModule.exportServiceObject(serviceObject, typetagOrProtocol, attributes);
+	  };
+
+	  // override export:as: to include a property object
+		def export: serviceObject as: type {
+			export: serviceObject as: type with: { nil };
+		};
+	
+		def export: svcObject {
+			export: svcObject as: (ProtocolM.protocolOf: svcObject) with: { nil };
+		};
+	
+		def export: svcObject with: clo {
+			export: svcObject as: (ProtocolM.protocolOf: svcObject) with: clo;
+		};
+	
+		// def [tFuture, discoverySubscription] := discover: Type
+		def discover: T {
+			def [fut,res] := FuturesModule.makeFuture();
+			def sub := when: T discovered: { |t|
+				res.resolve(t);
+			};
+			[fut,sub];
+		};
+	
+		// def [tFuture, discoverySubscription] := discover: Type where: { |t| filter(t) }
+		def discover: T where: filter {
+		  def [arFuture, arResolver] := FuturesModule.makeFuture();
+		  def sub := DiscoveryModule.whenever: T discovered: { |remoteRef|
+			  def props := isolate: { nil };
+			  if: (is: remoteRef taggedAs: PropertyObject) then: {
+				  remoteRef := remoteRef.service;
+				  props := remoteRef.properties;
+			  };
+
+		    if: (filter(props)) then: {
+			    sub.cancel();
+			    arResolver.resolve(remoteRef)
+		    };
+		  };
+		  [arFuture, sub];
+		};
+	
+		def ambient: T {
+			makeAmbientReference(T, dfltFilter, dfltArity, dfltLifetime, dfltReply);
+		};
+		def ambient: T withArity: A {
+			makeAmbientReference(T, dfltFilter, A, dfltLifetime, dfltReply);
+		};
+		def ambient: T withLifetime: L {
+			makeAmbientReference(T, dfltFilter, dfltArity, L, dfltReply);
+		};
+		def ambient: T withArity: A withLifetime: L {
+			makeAmbientReference(T, dfltFilter, A, L, dfltReply);
+		};
+		def ambient: T withReply: R {
+			makeAmbientReference(T, dfltFilter, dfltArity, dfltLifetime, R);
+		};
+		def ambient: T withArity: A withReply: R {
+			makeAmbientReference(T, dfltFilter, A, dfltLifetime, R);
+		};
+		def ambient: T withLifetime: L withReply: R {
+			makeAmbientReference(T, dfltFilter, dfltArity, L, R);
+		};
+		def ambient: T withArity: A withLifetime: L withReply: R {
+			makeAmbientReference(T, dfltFilter, A, L, R);
+		};
+		def ambient: T where: filter {
+			makeAmbientReference(T, filter, dfltArity, dfltLifetime, dfltReply);
+		};
+		def ambient: T where: filter withArity: A {
+			makeAmbientReference(T, filter, A, dfltLifetime, dfltReply);
+		};
+		def ambient: T where: filter withLifetime: L {
+			makeAmbientReference(T, filter, dfltArity, L, dfltReply);
+		};
+		def ambient: T where: filter withReply: R {
+			makeAmbientReference(T, filter, dfltArity, dfltLifetime, R);
+		};
+		def ambient: T where: filter withArity: A withLifetime: L withReply: R {
+			makeAmbientReference(T, filter, A, L, R);
+		};
+	
+		def snapshot: ref {
+			ref<-makeSnapshot()@[FuturesModule.FutureMessage,MetaMessage];
+		};
+	
+		def snapshot: ref after: period {
+			def [f,r] := FuturesModule.makeFuture();
+			when: period elapsed: {
+				r.resolve(snapshot: ref);
+			};
+			f;
+		};
+	
+		def AmbientRefsTest() {
+			extend: /.at.unit.test.UnitTest.new(ARImplModule.implname + " AmbientRefTest") with: {
+				deftype rARFooTest;
+				deftype rARBarTest;
+				deftype ARAsyncReplyServiceTestT;
+				deftype ARNonExistentTestT;
+				deftype ARManyServiceTestT;
+
+				def providerHost := actor: { |ARImplModuleCapsule|
+					deftype rARFooTest;
+					def ARModule := /.at.lang.ambientrefs(ARImplModuleCapsule);
+					def service := object: {
+						def testMethod(x) { x+1 };
+					};
+					ARModule.export: service as: rARFooTest;
+
+					deftype rARBarTest;
+					def service2 := object: {
+						def testContent(x) { x*x };
+					};
+					def y := 42;
+					ARModule.export: service2 as: rARBarTest with: { |y| def z := 5 };
+				
+					deftype ARAsyncReplyServiceTestT;
+					def service3 := object: {
+						def replyTo(f) { f<-reply(42) };
+					};
+					ARModule.export: service3 as: ARAsyncReplyServiceTestT;
+				
+					deftype ARManyServiceTestT;
+					def service4 := object: {
+						def serve(request) { request + 1 };
+					};
+					ARModule.export: service4 as: ARManyServiceTestT;			
+				};
+			
+				def providerHost2 := actor: { |ARImplModuleCapsule|
+					deftype ARManyServiceTestT;
+					/.at.lang.ambientrefs(ARImplModuleCapsule).export: (object: {
+						def serve(request) { request + 2 };
+					}) as: ARManyServiceTestT;
+				};
+
+				def a := ambient: rARFooTest;
+				def asyncReply := ambient: ARAsyncReplyServiceTestT;
+				def omni := ambient: ARManyServiceTestT;
+
+	      // ONE, SUSTAIN, REPLY
+				def testAsyncOneSustainFuture() {
+					def handle := a<-testMethod(5)@[One,Sustain,Reply];
+					FuturesModule.when: handle.future becomes: { |v|
+						self.assertEquals(6,v);
+					};
+				};
+				// ONE, TRANSIENT, REPLY
+				def testAsyncOneTransientFuture() {
+					def handle := a<-testMethod(5)@[One,Transient(seconds(14)),Reply];
+					FuturesModule.when: handle.future becomes: { |v|
+						self.assertEquals(6,v);
+					} catch: { |e|
+						self.fail("subject should have been found");
+					};
+				};
+				// ONE, EXPIRES
+				def testAsyncOneExpirable() {
+					def blackHole := ambient: ARNonExistentTestT;
+					def handle := blackHole<-testMethod(5)@[One,Expires(seconds(8))];
+					FuturesModule.when: handle.future becomes: { |v|
+						self.fail("method should have never been processed");
+					} catch: { |e|
+						self.assertTrue(is: e taggedAs: FuturesModule.TimeoutException);
+					};
+				};
+				
+				// ONE, INSTANT, ONEWAY
+				def testOneInstantOneway() {
+					def handle := a<-testMethod(5)@[One,Instant,Oneway];
+					self.assertEquals(nil, handle.future);
+				};
+				
+				// ONE, SUSTAIN, ONEWAY
+				def testOneSustainOneway() {
+					def handle := a<-testMethod(5)@[One,Sustain,Oneway];
+					self.assertEquals(nil, handle.future);
+				};
+			
+				// ONE, INSTANT, ONEWAY
+				def testAsyncOneInstantOnewayNotDropped() {
+					FuturesModule.future: { |return|				
+						// FIXME: currently, we're just waiting long enough and hoping
+						// that the actor is up in time, but this is otherwise a very
+						// unsafe unit test! (semantically the message may get lost)
+						when: seconds(10) elapsed: {
+							def handle := asyncReply<-replyTo(object: {
+								def reply(x) {
+									return(x);
+								}
+							})@[One,Instant,Oneway];
+							self.assertEquals(nil, handle.future);
+						}
+					}
+				};
+			
+				// ALL, TRANSIENT, DUE
+				def testAsyncAllTransientDue() {
+					def handle := omni<-serve(0)@[All,Transient(seconds(10)),Due(seconds(6))];
+					MFuturesModule.whenAll: handle.future resolved: { |vals|
+						self.assertEquals(2, vals.length);
+						self.assertTrue(vals.contains(1));
+						self.assertTrue(vals.contains(2));
+					} ruined: { |excs|
+						self.fail("unexpected exceptions: " + excs.map: { |exc| exc.message });
+					};
+				};
+				// ALL, TRANSIENT, REPLY
+				def testAsyncAllTransientFuture() {
+					FuturesModule.future: { |reply|
+						def count := 0;
+						def handle := omni<-serve(0)@[All,Transient(seconds(15)),Reply];
+						MFuturesModule.whenEach: handle.future becomes: { |val|
+						  self.assertTrue((val == 1).or: { val == 2 });
+						  count := count + 1;
+						  if: (count == 2) then: {
+							  reply(true);
+						  };
+					  };
+					};
+				};
+				// ALL, EXPIRES
+				def testAsyncAllExpires() {
+					def handle := omni<-serve(0)@[All,Expires(seconds(12))];
+					MFuturesModule.whenAll: handle.future resolved: { |vals|
+						self.assertEquals(2, vals.length);
+						self.assertTrue(vals.contains(1));
+						self.assertTrue(vals.contains(2));
+					} ruined: { |excs|
+						self.fail("unexpected exceptions: " + excs.map: { |exc| exc.message });
+					};
+				};
+				// ALL, SUSTAIN, ONEWAY
+				def testAsyncAllSustainOneway() {
+					FuturesModule.future: { |return|
+						def handle := asyncReply<-replyTo(object: {
+							def reply(x) {
+								return(x);
+								handle.cancel(); // stop sending the message
+							}
+						})@[All,Sustain,Oneway];
+						self.assertEquals(nil, handle.future);	
+					}
+				};
+				def testAsyncMatchingWhere() {
+					def a := ambient: rARBarTest where: (script: { |props| props.y > 40 } carrying: []);
+					def handle := a<-testContent(5)@[One,Sustain,Reply];
+					FuturesModule.when: handle.future becomes: { |v|
+						self.assertEquals(25,v);
+					} catch: { |e| raise: e };
+				};
+				def testAsyncNonMatchingWhere() {
+					def a := ambient: rARBarTest where: (script: { |props| props.z == 6 } carrying: []);
+					def handle := a<-testContent(5)@[One,Expires(seconds(10)),Reply];
+					FuturesModule.when: handle.future becomes: { |v|
+						self.fail("discovered a non-matching ambient reference");
+					} catch: { |e|
+						self.assertTrue(is: e taggedAs: FuturesModule.TimeoutException);
+					};
+				};
+				def testAsyncParamPassing() {
+					def act := actor: { def rcv(ar) { ar } };
+					FuturesModule.when: act<-rcv(a)@FuturesModule.FutureMessage becomes: { |newAR|
+						// after this, there will be 2 copies of a, one created upon parameter passing
+						// and one created upon method return
+						self.assertTrue(is: newAR taggedAs: AmbientReference);
+						// self.assertFalse(is: newAR taggedAs: /.at.lang.types.FarReference);
+						self.assertFalse(a == newAR);
+					};
+				};
+				// this unit test implements the simple voting example between proximate
+				// players in a multiplayer game
+				def testAsyncVoting() {
+					deftype VotePlayerTest;
+				
+					def spawnPlayers(max) {
+					  1.to: max do: { |i|
+							actor: { |i,ARImplModuleCapsule|
+								deftype VotePlayerTest;
+								/.at.lang.ambientrefs(ARImplModuleCapsule).export: (object: {
+									def askToVote(poll) { i }
+								}) as: VotePlayerTest with: {
+									def team := "blue";
+								};
+							}
+					  }	
+					};
+				
+					def MAX := 5;
+					spawnPlayers(MAX);
+				
+					def maxVoteTime := seconds(15);
+					def proximateTeamPlayers := ambient: VotePlayerTest
+					                            where: (script: { |p| p.team == "blue" } carrying: []);
+
+					def handle := proximateTeamPlayers<-askToVote("poll")@[All,Expires(maxVoteTime)];
+				
+					MFuturesModule.whenAll: handle.future resolved: { |votes|
+						//(handle.future<-sender())<-voteResult(votes)@Oneway;
+						self.assertEquals(MAX, votes.length);
+						1.to: MAX do: { |i|
+							self.assertTrue(votes.contains(i));
+						}
+					} ruined: { |excs|
+						self.fail("unexpected exceptions: " + excs.map: { |exc| exc.message });
+					};
+				};
+
+				def protocolExporterPeer := actor: { |ARImplModuleCapsule|
+					import /.at.lang.ambientrefs(ARImplModuleCapsule);
+					export: (object: {
+						def protocolAmbientRefTestMethod() { `ok }
+					}) with: {
+						def x := 42;
+					};
+				};
+				def protocolAmbientRef := ambient: (ProtocolM.protocol: {
+					def protocolAmbientRefTestMethod()
+				});
+
+				def testAsyncProtocolAmbientRef() {
+					def handle := protocolAmbientRef<-protocolAmbientRefTestMethod()@[One,Sustain,Reply];
+					FuturesModule.when: handle.future becomes: { |val|
+						self.assertEquals(`ok, val);
+					}
+				};
+
+				/* FIXME: extensional impl currently does not yet support exporting via protocol + attributes
+				def protocolWhereAmbientRef := ambient: (ProtocolM.protocol: {
+					def protocolAmbientRefTestMethod()
+				}) where: (script: { |props| props.x > 10 } carrying: []);			
+				def testAsyncProtocolsAndWhere() {
+					def handle := protocolWhereAmbientRef<-protocolAmbientRefTestMethod()@[One,Sustain,Reply];
+					FuturesModule.when: handle.future becomes: { |val|
+						self.assertEquals(`ok, val);
+					}
+				};*/
+			
+				def testAsyncSnapshot() {
+					FuturesModule.when: (snapshot: omni after: seconds(10)) becomes: { |snapshot|
+						self.assertEquals(2, snapshot.length);
+					}
+				};
+			
+				// ONE, SUSTAIN [as default], REPLY [as default]
+				def testAsyncOneDefaultSustainDefaultFuture() {
+					def defaultSustainFuture := ambient: rARFooTest withLifetime: Sustain withReply: Reply;
+					def handle := defaultSustainFuture<-testMethod(5)@One;
+					FuturesModule.when: handle.future becomes: { |v|
+						self.assertEquals(6,v);
+					};
+				};
+			};
+		
+		}; // end AmbientRefsTest
+		
+	}; // end anonymous module object
+}; // end AmbientRefsModule function

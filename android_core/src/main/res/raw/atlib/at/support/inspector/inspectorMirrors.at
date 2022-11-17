@@ -1,0 +1,83 @@
+def Pattern := jlobby.java.util.regex.Pattern;
+def Matcher := jlobby.java.util.regex.Matcher;
+
+deftype Object;
+def oldMirror := defaultMirror;
+
+/* Overrides the default mirror to provide before/after functionality on objects.
+ * This allows the programmer to define before and after advice
+ * Joinpoints are defined as code blocks which get the invocation and return a boolean value
+ * which represents that it mached with the current invocation or not.
+ * 
+ * Currently the only joinpoint abstraction implemented is matchMethod
+ * this boils down to a regexp which is compared with the name of the called method
+ * (Other joinpoint abstractions could easilly be added)
+ *
+ * Christophe Scholliers 
+ * cfscholl@vub.ac.be
+ */
+def defaultMirror() {
+ extend: oldMirror with: {
+		def before := [];
+		def after := [];
+
+		def triggerBefore(delegate, invocation) {
+			before.each: {|description| 
+				def [joinPoint, advice] := description;
+				if: joinPoint(invocation) then: {
+					[delegate,invocation] := description(delegate,invocation);
+				};
+			};
+			[delegate,invocation];
+		};
+		
+		def triggerAfter(delegate, invocation,val) {
+			after.each: {|description| 
+				def [joinPoint, advice] := description;
+				if: joinPoint(invocation) then: {	
+					val := advice(invocation,val);
+				}
+			};
+			val;
+		};
+		
+		def invoke(delegate, invocation) {
+			def [newDelegate, newInvocation] := triggerBefore(delegate, invocation);
+			def val := super^invoke(newDelegate,newInvocation);
+			triggerAfter(newDelegate,newInvocation,val);			
+		};
+		
+		def addBefore(description) {
+			before := before + [description];
+		};
+	
+		def addAfter(description) {
+			after := after + [description];
+		};	
+	};
+};
+
+def matchMethod: string {
+	def p := jlobby.java.util.regex.Pattern.compile(string);
+	{|invocation| 
+		jlobby.at.support.inspector.ImmutableModel.matcher(p,invocation.selector.text).find();
+	};
+};
+
+def on: object before: joinPoint  do: advice {
+	(reflect: object).addBefore([joinPoint, advice]);
+};
+
+def on: object after: joinPoint do: advice {
+	(reflect: object).addAfter([joinPoint, advice]);
+};
+
+def object: code {
+	object: code childOf: nil extends: false taggedAs: [Object] mirroredBy: defaultMirror;
+};
+
+def mirror: code {
+	object: code childOf: defaultMirror extends: true taggedAs: [Object] mirroredBy: defaultMirror;
+};
+
+self;

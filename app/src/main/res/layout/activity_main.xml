@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:clipChildren="false">
+
+
+    <edu.vub.at.wekittens.DrawingView
+        android:id="@+id/drawingview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_alignParentEnd="true"
+        android:background="@drawable/background" />
+
+    <android.support.v7.widget.RecyclerView
+        android:id="@+id/playerhand"
+        android:layout_width="match_parent"
+        android:layout_alignParentBottom="true"
+        android:layout_height="wrap_content" />
+
+    <TextView
+        android:id="@+id/txtExplosion"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Boom!"
+        android:visibility="invisible"/>
+
+    <Button
+        android:id="@+id/btnPlayerTop"
+        android:layout_width="wrap_content"
+        android:layout_height="100dp"
+        android:layout_alignParentTop="true"
+        android:layout_centerHorizontal="true"
+        android:background="@android:color/transparent"
+        android:text="" />
+
+    <Button
+        android:id="@+id/btnPlayerLeft"
+        android:layout_width="wrap_content"
+        android:layout_height="100dp"
+        android:layout_alignParentLeft="true"
+        android:layout_centerVertical="true"
+        android:background="@android:color/transparent"
+        android:text="" />
+
+    <Button
+        android:id="@+id/btnPlayerRight"
+        android:layout_width="wrap_content"
+        android:layout_height="100dp"
+        android:layout_alignParentRight="true"
+        android:layout_centerVertical="true"
+        android:background="@android:color/transparent"
+        android:text="" />
+
+</RelativeLayout>

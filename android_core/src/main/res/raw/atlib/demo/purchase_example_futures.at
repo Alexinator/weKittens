@@ -1,0 +1,123 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Software Languages Lab, 2006 - 2009
+ * Authors: Ambient Group
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/* The E/Waterken Causeway purchase example with futures, rewritten in AmbientTalk.
+ * This example demonstrates the use of tracing. The generated trace logs
+ * can be analyzed using the Causeway debugger.
+ *
+ * This example creates 4 separate actors. The buyer actor then sends
+ * a message to each of the three other actors and collects the replies
+ * in an 'asyncand' abstraction.
+ *
+ * The example by default writes all four actor logs to your home directory.
+ *
+ * @author Tom Van Cutsem
+ */
+ 
+// problem with the output:
+// 1) Sent and SentIf nodes from buyerP don't generate any stack trace -> no source
+
+def home := jlobby.java.lang.System.getProperty("user.home");
+
+// buyer process
+def buyerP := actor: {
+  import /.at.lang.futures;
+  def T := /.at.support.tracer("buyer", home).traceOn();
+  
+  def makeAsyncAnd(futures) {
+    def [future, resolver] := makeFuture();
+    def numExpected := futures.length;
+    if: (numExpected < 1) then: {
+      resolver.resolve(true);
+    } else: {
+      futures.each: { |future|
+        when: future becomes: { |answer|          
+          if: (resolver != nil) then: {       
+            if: answer then: {
+              numExpected := numExpected - 1;
+              if: (numExpected <= 0) then: {
+                T.comment("happened: all true");
+                resolver.resolve(true);
+                resolver := nil;
+              } else: {
+                T.comment("leadsto: all true");
+              }
+            } else: {
+                T.comment("found a false");
+                resolver.resolve(false);
+                resolver := nil;
+            }
+          }
+        }
+      }
+    };
+    future
+  };
+  
+  def go(inventory, creditBureau, shipper) {
+    def result := makeAsyncAnd([
+      inventory<-partInStock("partNo")@FutureMessage,
+      creditBureau<-checkCredit("name")@FutureMessage,
+      shipper<-canDeliver("profile")@FutureMessage ]);
+    when: result becomes: { |answer|
+      system.println("Got answer: " + answer);
+      T.close(); // stop tracing
+    };    
+  };
+};
+
+// product process
+def productP := actor: {
+  def T := /.at.support.tracer("product", home).traceOn();
+  
+  def partInStock(partNo) {
+    T<-close()@/.at.support.tracer.NoTrace; // postpone closing logfile to later turn, but don't log this message
+    true
+  };
+};
+
+// accounts process
+def accountP := actor: {
+  def T := /.at.support.tracer("account", home).traceOn();
+  
+  def checkCredit(name) {
+    T<-close()@/.at.support.tracer.NoTrace; // postpone closing logfile to later turn, but don't log this message
+    true
+  };
+};
+
+// shipper process
+def shipperP := actor: {
+  def T := /.at.support.tracer("shipper", home).traceOn();
+  
+  def canDeliver(profile) {
+    T<-close()@/.at.support.tracer.NoTrace; // postpone closing logfile to later turn, but don't log this message
+    true
+  };
+};
+
+buyerP<-go(productP, accountP, shipperP);

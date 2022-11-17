@@ -1,0 +1,34 @@
+def log(text) {
+  Android.Log.i("weKittens", text);
+};
+
+def makeWeKittens() {
+
+  def otherPlayers; // stores remote players.
+
+  def gui;
+
+  //interface for android gui.
+  def localInterface := object: {
+
+  };
+
+  //interface for remote painters.
+  def remoteInterface := object: {
+
+  }; //end-remoteInterface
+
+
+  def goOnline() {
+  	// setup peer-to-peer service discovery
+  };
+
+  goOnline();
+  log("Hallo Android!!");
+
+  // example symbiosis
+  Android.parent.topExplosionAnimation();
+};
+
+network.online;
+self;

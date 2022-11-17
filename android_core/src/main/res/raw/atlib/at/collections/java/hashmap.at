@@ -1,0 +1,164 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2011
+ * Author: Kevin Pinte
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+
+/**
+ * AmbientTalk wrapper for java.util.HashMap
+ * supports interface of java.util.HashMap
+ * partially supports interface of AmbientTalk table
+ *   e.g. hm["key"] := "value" is equivalent to hm.put("key", "value")
+ *   e.g hm.each: { |key ,value| ... }
+ * supports (de)serialization using asCode: and fromCode:
+ * hashmaps can be created in a literal way: HashMap: { k1 => v1; k2 => v2; ... }; 
+ *
+ */
+
+import ~.traits.map;
+import /.at.lang.exceptions;
+
+def HASHMAP_SELECTOR := `=>;
+
+def JHashMap := jlobby.java.util.HashMap;
+
+def HashMapModule := object: {
+
+	deftype HashMapT;
+
+	def HashMapMirror := mirrorIsolate: {
+		
+		def print() {
+			"<hashmap:{" + (self.base.toTable().map: { |entry|
+				(print: entry[1]) + "=>" + (print: entry[2]);
+			}).join(", ") + "}>";
+		};
+		
+		def asCode() {
+			def elements := asCode: (self.base.toTable());
+			"{ def elements := " + elements + " ; HashMap.new(elements) }()";
+		};
+		
+	};
+	
+	def HashMap := isolate: {
+			
+		// wrapped java vector
+		def jhashmap := JHashMap.new();
+		
+		// initialization
+		def init(collection := []) { 
+			// a collection that supports .each: {|e| ... }
+			self.jhashmap := JHashMap.new();
+			if: (is: collection taggedAs: /.at.lang.types.Table) then: {
+				//suppose table with key-value pairs
+				self.addFromTable(collection);
+			} else: {
+				collection.each: { |k, v| self.put(k, v) };
+			};
+		};
+		
+		def getMap() {
+			self.jhashmap;
+		};
+		
+		def setMap(map) {
+			self.jhashmap := map;
+		};
+		
+		import MapTrait;
+		
+		def atPut(key, val) {
+			self.jhashmap.put(key, val);
+			val;
+		};
+		
+		def at(key) {
+			self.jhashmap.get(key);
+		};
+		
+		def each: clo {
+			def keyIt := self.jhashmap.keySet().iterator();
+			def valIt := self.jhashmap.values().iterator();
+			while: { keyIt.hasNext() } do: {
+				clo(keyIt.next(), valIt.next());
+			};
+		};
+		
+		def eachKey: clo {
+			def keyIt := self.jhashmap.keySet().iterator();
+			while: { keyIt.hasNext() } do: {
+				clo(keyIt.next());
+			};
+		};
+		
+		def toTable() {
+			def table := [];
+			self.each: { |k, v|
+				table := table + [[k, v]];
+			};
+			table;
+		};
+		
+		def addFromTable(t) {
+			t.each: { |entry| self.put(entry[1], entry[2]) };
+			nil;
+		};
+		
+		def asTable() { self.toTable() };
+
+		
+	} taggedAs: [HashMapT, MapT] mirroredBy: HashMapMirror;
+	
+	deftype IllegalHashMapSelector;
+		
+	def HashMap: clo in: scope {
+		def hm := HashMap.new();
+		def statements := clo.method.bodyExpression.statements;
+		def keyExp;
+		def valExp;
+		def key;
+		def val;
+		statements.each: { |s|
+			if: (s.messageExpression.selector == HASHMAP_SELECTOR) then: {
+				keyExp := s.receiverExpression;
+				valExp := s.messageExpression.arguments[1];
+				key := eval: keyExp in: scope;
+				val := eval: valExp in: scope;
+				hm.put(key, val);
+			} else: {
+				raise: createException(IllegalHashMapSelector);
+			};
+		};
+		hm;
+	};
+	
+	def HashMap: clo {
+		HashMap: clo in: clo.context().lexicalScope();
+	};
+	
+};
+
+HashMapModule;

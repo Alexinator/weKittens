@@ -1,0 +1,359 @@
+import /.at.lang.traits;
+
+def Color := /.frameworks.morphic.drawmorph.Color;
+def Shapes := /.frameworks.morphic.drawmorph.Shapes;
+def Morphs := /.frameworks.morphic.morphstructure;
+def ProtoMorph := object: {
+	use: {
+		import Morphs.ProtoMorphTrait;
+	}
+};
+def CompositeMorph := object: { 
+	use: { 
+		import /.frameworks.morphic.morphstructure.CompositeTrait 
+	} 
+};
+
+// Combines position and composite traits
+def BasicMorph := object: {
+	// modified PositionTrait setPosition method to move the children along
+	def setPosition(newX, newY) {
+		def [dx,dy] := self.oldSetPosition(newX, newY);
+		self.onSubmorphsDo: { |submorph| submorph.move(dx, dy) };
+		[dx,dy]
+	};
+	
+	use: {
+		import Morphs.CompositeTrait;
+		import Morphs.PositionTrait alias setPosition := oldSetPosition;
+		import /.frameworks.morphic.eventmorph.DefaultInputEventHandlerTrait;
+	}
+};
+
+def RectangleMorph := extend: BasicMorph with: {
+	def init(x, y, width, height) {
+		self.setPosition(x, y);
+		self.setSize(width, height);
+	};
+	def drawOn: canvas {
+		canvas.drawRectangle(self,self.getColor());
+	};
+	
+	use: {
+		import Morphs.SizeTrait;
+		import Morphs.PickingTrait;
+		import /.frameworks.morphic.drawmorph.ColoredMorphTrait;
+		import /.frameworks.morphic.drawmorph.DrawableMorphTrait;
+	};
+};
+
+def RelativeRectangleMorph := extend: RectangleMorph with: {
+	def rx := 0.0;
+	def ry := 0.0;
+	def init(width, height) {
+		self.setSize(width, height)
+	};
+	/** interpolate between a and a+b by factor t [0,1] */
+	def interpolate(a,b,t) { a + b*t };
+	/** 'override' the x and y access to recalculate the absolute coordinates based on the relative ones */
+	def x() {
+		def owner := self.owner;
+		if: !(nil == owner) 
+		then: {
+			interpolate(owner.x, owner.width, rx).round();
+		} else: {	
+			0 
+		};
+	};
+	def y() { 
+		def owner := self.owner;
+		if: !(nil == owner) 
+		then: {
+			interpolate(owner.y, owner.height, ry).round();
+		} else: {	
+			0 
+		};
+	};
+	
+	def x:=(x); //not strictly necessary to override these though
+	def y:=(y);
+	
+	// overloading onAdd to change the relative coordinates
+	def onAdd(parent) {
+		def oldX := self.x; //get the old absolute coordinates
+		def oldY := self.y;
+		super^onAdd(parent); // default behavior: changes the owner to the new one
+		def dx := oldX - parent.x;
+		def dy := oldY - parent.y;
+		if: (!(nil == parent).and: { (0 < parent.width).and: { 0 < parent.height } }) //avoid divide by zero
+		then: {
+			self.rx := dx / parent.width;
+			self.ry := dy / parent.height;	
+		} else: { //divide by my own size if parent has none (zero)
+			self.rx := 0.0;
+			self.ry := 0.0;
+		}
+	};
+	def setPosition(rx,ry) { self.rx := rx; self.ry := ry; };
+};
+
+/** 
+ * example of extending a morph
+ */
+def CircleMorph := extend: RectangleMorph with: {
+	def init(x, y, radius) {
+		super^init(x,y,radius,radius);
+		super^setColor(Color.red);
+	};
+	def drawOn: canvas {
+		canvas.drawOval(self, self.getColor());
+	};
+	// override the bounding checks (works for oval too)
+	def bounds() {
+		Morphs.BoundingBox.new(self.x - self.width, self.y - self.height, self.width*2, self.height*2)
+	};
+	/** override inside test for picking a circle instead the of the rectangular bounds*/
+	def inside(x,y) {
+		def dx := x - self.x;
+		def dy := y - self.y;
+		def distance2 := dx*dx + dy*dy;
+		distance2 < (self.width * self.width);
+	};
+};
+
+def LabelMorph := extend: RectangleMorph with: {
+	def string := "";
+	def init(x, y, labelText := "") {
+		self.setPosition(x, y);
+		self.string := labelText;
+	};
+	
+	def drawOn: canvas {
+		canvas.drawText(string, self.x, self.y, self.getColor());
+	}
+};
+
+/** Creates an identical version of the passed morph with added transparency.
+ *  This snap morph overrides the 'drop' behavior to only 'accept' the morph it was
+ *   based on and in a wider radius (bounding box collission instead of inclusion).
+ */
+def makeSnapMorph(snappedMorph) {
+	def SnapMorph := extend: snappedMorph with: {
+		def dropTest(droppedMorph) {
+			(droppedMorph == snappedMorph).and:
+			{ self.bounds.collides(droppedMorph.bounds) } and:
+			{ !(droppedMorph == self) }
+		};
+		// do something after adding a morph
+		def addMorph(morph) {
+			super^addMorph(morph);
+			morph.setPosition(self.x, self.y);
+		};
+		def init();
+	};
+	def snapInstance := SnapMorph.new();
+	snapInstance.setColor(Color.makeTransparent(snappedMorph.getColor()));
+	snapInstance
+};
+
+def HandMorph := extend: BasicMorph with: {
+	def drawOn: canvas {
+		//draw children
+		self.allSubmorphsDo: {|m| m.drawOn: canvas};
+		//draw myself
+		def crossTop := Shapes.Rectangle.new(self.x, self.y - 4, 1, 4);
+		def crossBottom := Shapes.Rectangle.new(self.x, self.y + 1, 1, 4);
+		def crossLeft := Shapes.Rectangle.new(self.x - 4, self.y, 4, 1);
+		def crossRight := Shapes.Rectangle.new(self.x + 1, self.y, 4, 1);
+		canvas.drawRectangle(crossTop, Color.red);
+		canvas.drawRectangle(crossBottom, Color.red);
+		canvas.drawRectangle(crossLeft, Color.red);
+		canvas.drawRectangle(crossRight, Color.red);
+	};
+	
+	def dispatch(event) {
+		event.handleWith: self;
+	};
+	/** on mouse press, try grabbing a morph */
+	def handleMousePressed(event) {
+		def world := self.owner;  /** we assume our owner is the world morph */
+		def picked := world.pick(event.position.x, event.position.y);
+		/** the front of the picked list is the most specific picked morph (deepest in the hierarchy) */
+		/** grab the morph, a morph that does not want to be moved will return nil for example */
+		if: !(nil == picked[1])
+		then: {
+			def grabbed := picked[1].grab();
+			if: !(world == grabbed) 
+			then: {
+				self.addMorph(grabbed)
+			}
+		}
+	};
+	def moveHand(x,y) {
+		self.setPosition(x, y);
+		def world := self.owner;
+		world.repaint();
+	};
+	
+	def handleMouseMoved(event) {
+		self.moveHand(event.position.x, event.position.y)
+	};
+	def handleMouseDragged(event) {
+		self.moveHand(event.position.x, event.position.y)
+	};
+	def handleMouseClicked(event) {
+		def world := self.owner;
+		def picked := world.pick(event.position.x, event.position.y);
+		if: !(picked[1] == world)
+		then: {
+			picked[1].handleMouseClicked(event);
+		};
+	};
+	
+	def handleMouseReleased(event) {
+		/**
+		 * check if the morph fits inside, if it does then check the children.
+		 * if none of the children can fit it inside, add the morph as a child here.
+		 * Assumes all morphs in the hierarchy have the morphCollectionTrait.
+		 */
+		def dropMorph(targetMorph, droppedMorph) {
+			if: targetMorph.dropTest(droppedMorph)
+			then: {
+				if: (nil == targetMorph.subMorphs.find: { |subMorph| dropMorph(subMorph, droppedMorph) })
+				then: {	targetMorph.addMorph(droppedMorph) };
+				true
+			} 
+			else: {
+				false
+			}
+		};
+		def world := self.owner;
+		self.onSubmorphsDo: {
+			|droppedMorph| 
+			dropMorph(world,droppedMorph)
+		}
+	};
+	
+	use: {
+		import Morphs.SizeTrait;
+		import Morphs.PickingTrait;
+		import /.frameworks.morphic.drawmorph.DrawableMorphTrait;
+	}
+};
+
+def WorldMorph := object: {
+	def handMorph;
+	def addMorph(morph) {
+		self.oldAddMorph(morph);
+		self.repaint();
+	}; 
+	def drawOn: canvas {
+		canvas.clear(self,self.getColor());
+		self.allSubmorphsDo: { //draw from back to front
+			|submorph|
+			submorph.drawOn: canvas
+		};
+		handMorph.drawOn: canvas; //draw handmorph over everything else
+	};
+	def init() {
+		/* hardcoded suff :P */
+		self.setPosition(0,0); 
+		self.setSize(800,600); 
+		self.sync(); /* creates the awt instances in the AwtWorldMorphTrait */
+		self.setColor(Color.white);
+		
+		//handmorph is treat as 'special', outside the normal child hierarchy (drawing order reasons etc)
+		handMorph := HandMorph.new();
+		handMorph.owner := self; //handmorph still has me as parent, but it's not a child of mine
+		// self.addMorph(handMorph);
+		/** subscribe the handmorph to the mouse input events */
+		self.subscribe(handMorph);
+	};
+	use: {
+		import Morphs.CompositeTrait alias addMorph := oldAddMorph;
+		import Morphs.SizeTrait;
+		import Morphs.PositionTrait;
+		import Morphs.PickingTrait;
+		import /.frameworks.morphic.drawmorph.ColoredMorphTrait;
+		import /.frameworks.morphic.drawmorph.DrawableMorphTrait;
+		import /.frameworks.morphic.drawmorph.AwtCanvasWorldMorphTrait; /* creates an awt frame, canvas and handles awt painting requests */
+		import /.frameworks.morphic.eventmorph.AwtInputEventDispatcherTrait;
+	}
+};
+
+def MorphicTest :=
+  extend: /.at.unit.test.UnitTest.new("Morphic test") with: {
+    def test := self;
+    def testProtoMorph() {
+    	def m := ProtoMorph.new();
+		test.assertEquals(m.owner, nil);
+		def m2 := ProtoMorph.new();
+		m.owner := m2;
+		test.assertEquals(m.owner, m2);
+    };
+    def testCompositeMorph() {
+    	def m := CompositeMorph.new();
+    	def m1 := CompositeMorph.new();
+    	def m2 := CompositeMorph.new();
+    	def m3 := CompositeMorph.new();
+		def m4 := CompositeMorph.new();
+		test.assertEquals(m.numSubmorphs(), 0);
+		m.addMorph(m1);
+		test.assertNotEquals(m.numSubmorphs(), 0);
+		test.assertEquals(m.numSubmorphs(), 1);
+		m.addMorph(m1);
+		test.assertEquals(m.numSubmorphs(), 1);
+		m.addMorph(m2);
+		test.assertEquals(m.numSubmorphs(), 2);
+		m.addMorph(m3);
+		test.assertEquals(m.numSubmorphs(), 3);
+		m.removeMorph(m3);
+		test.assertEquals(m.numSubmorphs(), 2);
+		m4.addMorph(m2);
+		test.assertEquals(m.numSubmorphs(), 1);
+		m4.addMorph(m1);
+		test.assertEquals(m.numSubmorphs(), 0);
+    };
+    def testWorldMorph() {
+    	def world := WorldMorph.new();
+    	def r := RectangleMorph.new(400,300,100,100);
+    	def r2 := RectangleMorph.new(400,400,128,128);
+    	r2.setColor(Color.blue);
+    	def c := CircleMorph.new(100,100,64);
+    	def r3 := RectangleMorph.new(432,432,64,64);
+    	r3.setColor(Color.white);
+    	def c2 := CircleMorph.new(464,464,32);
+    	c2.setColor(Color.black);
+    	def c4 := c2.new(100,100,32);
+    	c4.setColor(Color.white);
+    	world.addMorph(r);
+    	world.addMorph(r2);
+    	world.addMorph(c);
+    	r2.addMorph(r3);
+    	r3.addMorph(c2);
+    	c.addMorph(c4);
+		def rm := RelativeRectangleMorph.new(100,100);
+		world.addMorph(rm);
+		rm.setPosition(0.8, 0.1);
+		def lm := LabelMorph.new(200, 200, "TEST TEST TEST TEST TEST");
+		world.addMorph(lm);
+		def em := RectangleMorph.new(200, 230, 150, 20);
+		em.setColor(Color.black);
+		def lm2 := LabelMorph.new(200, 250, "embedded label test");
+		lm2.setColor(Color.white);
+		world.addMorph(em);
+		em.addMorph(lm2);
+		//test snapmorph
+		def toSnap := RectangleMorph.new(560, 450, 50, 50);
+		toSnap.setColor(Color.red);
+		world.addMorph(toSnap);
+		def s := makeSnapMorph(toSnap);
+		s.setPosition(425,325);
+		r.addMorph(s);
+		world.addMorph(RectangleMorph.new(560,450,25,25));
+		
+		def butan := ButtonMorph.new(200,200,50,20);
+		world.addMorph(butan);
+    };
+ };
+MorphicTest.runTest();

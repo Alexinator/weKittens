@@ -1,0 +1,212 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/**
+ * unit test for the basic programming tutorial chapter
+ * @author tvcutsem
+ * @author egonzale
+ */
+extend: /.at.unit.test.UnitTest.new("BasicProgTutorial") with: {
+
+		def testVariables(){
+		  def x := 5;
+		  self.assertEquals(5, x);
+		  def y := x + 2;
+		  self.assertEquals(7, y);
+		  [x,y] := [y,x];
+		  self.assertEquals(5,y);
+		  self.assertEquals(7,x);
+		};
+
+        def testTables(){
+          def z := 0;
+          def table[5] { z := z + 1 };
+          self.assertEquals("[1, 2, 3, 4, 5]", print: table);
+		  def vowels := ["a", "e", "i", "o", "u"];
+		  self.assertEquals( print: ["a", "e", "i", "o", "u"], print: vowels);
+		  table[3] := vowels;
+		  self.assertEquals(print: [1, 2, ["a", "e", "i", "o", "u"], 4, 5], print: table);
+		  self.assertEquals("e", table[3][2]);
+		  self.assertEquals(print: [1, [1, 2, ["a", "e", "i", "o", "u"], 4, 5], "ambientTalk"], print: [ 1, table, "ambientTalk"]);
+		  //Table Splicing subsection
+		  self.assertEquals("[1, 2, 3, 4]", print: [1,@[2,3],4]);
+		  self.assertEquals("[1, 2, [3], [4], 5, 6]", print: [1, @[2,[3]], [4], @[5], @[], 6]);
+		  def [first, @rest] := [1,2,3,4];
+	  	  self.assertEquals("[2, 3, 4]", print: rest);
+		};
+		
+		def testFunctions(){
+		  def square(x) { x*x };
+		  self.assertEquals(25, square(5));
+		  def f() { nil };
+		  self.assertEquals(nil, f());
+		  def counter := 0;
+		  def inc() { counter := counter + 1};
+		  self.assertEquals(1, inc());
+		  def fac(n) {
+			def inner(n, result) {
+			   if: (n=0) then: { result } else: { inner( n-1, n * result)  }
+			}; 
+			inner(n,1)
+	      };
+	      self.assertEquals(120, fac(5));
+	
+		  //Variable-Length Argument Functions
+		  def sum(@args) {
+		    def total := 0; 
+		    foreach: { |el|  total := total + el } in: args; 
+		    total
+		  };
+		  self.assertEquals(6, sum(1,2,3));
+		  def suma(a, b, @rest){ 
+		    def total := a + b; 
+		    foreach: { |el|  total := total + el } in: rest; 
+		    total
+		  };
+		  self.assertEquals(6, suma(1,2,3));
+		  def incr( number, step := 1){ number + step};
+		  self.assertEquals(4, incr(3));
+		  self.assertEquals(6, incr(3,3));
+		};
+		
+		def testClosures(){
+		  def makeCell(val){
+		    def getter() { val} ;
+		    def setter(v) {val := v};
+		    [getter, setter]
+		  };
+		  def [get, set] := makeCell(42);
+		  self.assertEquals(42, get());
+		};
+		
+		def testBlocks(){
+		  self.assertEquals(5, {|a, b| a+ b}(3,2));
+		  def sum := {|a, b, @rest| 
+		    def total := a + b; 
+		    foreach: { |el| total := total + el} in: rest; total 
+		  };
+		  self.assertEquals(6, sum(1,2,3));
+		};
+		
+		def testKeywords(){
+		  def square(x) { x*x };
+		  def map: clo onto: tbl {
+		    def i := 0;
+		    def mapped[tbl.length] {
+			  i := i+1;
+		      clo( tbl[ i ] )
+		    };
+		  };
+		  self.assertEquals( "[1, 4, 9]", print: map: square onto: [1,2,3]);	
+		};
+		
+		def testDataTypes(){
+		  //Numerical data types
+		  self.assertEquals( 2, 1.inc());
+	      self.assertEquals( 0.5403023058681398, 1.cos());
+	      self.assertEquals( "[1, 2, 3, 4]", print: 1 ** 5);
+	      self.assertEquals( "[5, 4, 3, 2, 1]", print: 5 *** 1);
+		  self.assertEquals( 1, 1.4567.round());
+		  self.assertEquals( 1, 1.8.floor());
+		  self.assertEquals( 2, 1.4.ceiling());
+		  self.assertEquals( -1, -1.abs());
+		  def output := "";
+		  2.to: 6 step: 2 do: { |i| output := output + i };
+		  self.assertEquals("246", output);
+		  output := "";
+		  6.downTo: 1 step: 2 do: { |i| output := output + i };
+		  self.assertEquals("642", output);
+		  output := "";
+		  3.doTimes: { |i| output := output + i };
+		  self.assertEquals("123", output);
+		  //Texts
+		  self.assertEquals( print: ["a", "m", "b", "i", "e", "n", "t", "t", "a", "l", "k"], print: "ambienttalk".explode());
+		  self.assertEquals( print: ["one", "two", "three"], print: "one,two,three".split(","));
+	      self.assertEquals( "AmbIEnttAlk", "ambienttalk".replace: "[aeiou]" by: {|vowel| vowel.toUpperCase()});
+	      self.assertEquals( "a", "A".toLowerCase());
+	      self.assertEquals( 11, "ambienttalk".length());
+	      self.assertFalse( "ambienttalk" ~= "java");
+	      self.assertTrue( "ambienttalk" ~= ".*tt.*");
+		  //Tables
+	      self.assertEquals( "[1, 3]", print: [1,2,3].filter: {|e| e != 2 });
+	      self.assertEquals( "[2, 3, 4]", print: [1,2,3].map: { |i| i + 1 });
+	      def vowels := ["a", "e", "i", "o", "u"];
+	      self.assertEquals( 5, vowels.length);
+	      self.assertEquals( "a", vowels.at(1));
+		  self.assertEquals( "z", vowels.atPut(1, "z"));
+	      self.assertEquals( print: ["z", "e", "i", "o", "u"], print: vowels);
+	      self.assertEquals( "eio", vowels.select(2,5).implode());
+	      self.assertFalse(vowels.isEmpty());
+	      def sum := 0; 
+	      [1,2,3].each: { |i| sum := sum + i };
+	      self.assertEquals( 6, sum);
+		  def sumNnum (@args) {
+		    args.inject: 0 into: { |total, next| total + next}
+		  };
+	      self.assertEquals(6, sumNnum(1,2,3));
+	      //Booleans
+	      self.assertEquals( 0, (0 < 1).ifTrue: { 0 });
+	      self.assertEquals( 1, (3 != 5).ifTrue: { 1 } ifFalse: { 0 });
+      	  def [i, j] := [1,3];
+          self.assertEquals( "[1, 3]", print: [i,j]);
+          output := "";
+          {i < j}.whileTrue: { output := output + i; i := i + 1 };
+          self.assertEquals("12", output);
+		};
+		
+		def testControlFlowConstructs(){
+		  def sort(table, cmp := { |e1,e2| e1 < e2 }) {
+			def quickSort(table, low, high) {
+		        def left := low;
+			    def right := high;
+		 		def pivot := table[(left+right) /- 2];
+				def save := nil;
+			    while: { left <= right } do: {
+				    while: { cmp(table[left], pivot) } do: { 
+			           left := left + 1 
+			        };
+			        while: { cmp(pivot, table[right]) } do: { 
+			           right := right - 1 
+			        };
+					if: (left <= right) then: {
+					   // swap elements
+					   save := table[left];
+					   table[left] := table[right];
+					   table[right] := save;
+					   left := left + 1;
+					   right := right - 1;
+					};
+				};
+				if: (low<right) then: { quickSort(table,low,right) };
+				if: (high>left) then: { quickSort(table,left,high) };
+				table;
+		     };
+			 quickSort(table, 1, table.length);
+		  };
+		  self.assertEquals( "[2, 4, 5, 6, 8, 37]", print: sort([2,37,6,4,5,8]));
+		};
+};

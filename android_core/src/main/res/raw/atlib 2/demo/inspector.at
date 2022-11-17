@@ -1,0 +1,429 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2010
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+def awt		:= jlobby.java.awt;
+def swing	:= jlobby.javax.swing;
+
+def Vector	:= jlobby.java.util.Vector;
+
+// Auxiliary function to easily iterate over Vectors in AmbientTalk
+def Vector.each: closure {
+	if: !(self.isEmpty()) then: {
+		0.to: self.size()-1 do: { | index |
+			closure(self.elementAt(index));
+		};
+	};
+};
+
+// Implements the default inspector UI which contains a trace of previously inspected values
+def InspectorTemplate := object: {
+	
+	// This is the dialog this AmbientTalk object embodies/manipulates
+	def thisDialog;
+	
+	// This is the object at the bottom of the decorators to which inspect and dive commands should be sent
+	def handle;
+	
+	// These values are modified by the methods of this object and therefore
+	// are defined as instance variables rather than as private variables of
+	// the init method which sets up all contained components.
+	def traceList;  	// a list of representations for previously inspected values
+	def traceObjects;	// a list of previously inspected values
+	
+	// Custom inspectors need access to the different button to register action
+	// listeners or possibly enable or disable them.
+	def inspectButton;
+	def diveButton;
+	def exitButton;
+	
+	// Custom applications may add tabs or need to test whether a tab is active
+	def inspectorTabs;
+	
+	// Initialises the default UI supported by the inspector
+	def buildGUI(currentTrace := jlobby.java.util.Vector.new()) {
+			thisDialog 		:= swing.JDialog.new();
+		
+			inspectButton	:= swing.JButton.new();
+			diveButton 		:= swing.JButton.new();
+			exitButton		:= swing.JButton.new();
+		
+			inspectorTabs	:= swing.JTabbedPane.new();
+		  def tracePanel := swing.JPanel.new();
+		
+		  def traceScroll	:= swing.JScrollPane.new();
+			traceList		:= swing.JList.new();
+			traceObjects	:= currentTrace;
+		
+		// Dialog Layout	
+		def contentPane		:= thisDialog.getContentPane();
+		def layout			:= awt.GridBagLayout.new();
+		layout.columnWidths	:= [120, 120, 155, 0];
+		contentPane.setLayout(layout);
+		
+		// Inspect Button
+		inspectButton.setText("Inspect");
+		contentPane.add(inspectButton, 
+			awt.GridBagConstraints.new(
+				0, 0, 1, 1, 0.0, 0.0, awt.GridBagConstraints.CENTER, 
+				awt.GridBagConstraints.BOTH, awt.Insets.new(0, 0, 5, 5), 0, 0));
+		
+		// Dive Button
+		diveButton.setText("Dive");
+		contentPane.add(diveButton, 
+			awt.GridBagConstraints.new(
+				1, 0, 1, 1, 0.0, 0.0, awt.GridBagConstraints.CENTER, 
+				awt.GridBagConstraints.BOTH, awt.Insets.new(0, 0, 5, 5), 0, 0));
+		
+		// Exit Button
+		exitButton.setText("Exit");
+		contentPane.add(exitButton, 
+			awt.GridBagConstraints.new(
+				2, 0, 1, 1, 0.0, 0.0, awt.GridBagConstraints.CENTER, 
+				awt.GridBagConstraints.BOTH, awt.Insets.new(0, 0, 5, 5), 0, 0));
+				
+		// Trace Panel
+		def traceLayout 			:= awt.GridBagLayout.new();
+		traceLayout.columnWidths	:= [   295   ];
+		traceLayout.rowHeights		:= [0, 172, 0];
+		tracePanel.setLayout(traceLayout);
+		tracePanel.setName("Trace");
+		
+		// Trace List
+		traceList.setSelectionMode(swing.ListSelectionModel.SINGLE_SELECTION);
+		def traceListModel			:= swing.DefaultListModel.new();
+		traceList.setModel(traceListModel);
+		traceObjects.each: { | element | traceListModel.addElement(element); };
+		traceScroll.setViewportView(traceList);
+		tracePanel.add(traceScroll,
+			awt.GridBagConstraints.new(
+				0, 0, 3, 3, 0.0, 0.0, awt.GridBagConstraints.CENTER, 
+				awt.GridBagConstraints.BOTH, awt.Insets.new(0, 0, 0, 0), 0, 0));
+		
+		// Trace Button Listeners
+		let: {
+			def selectedTraceElement() {
+				def currentTab 		:= inspectorTabs.getSelectedComponent();
+				if: (currentTab.getName() == "Trace") then: {
+					traceList.getSelectedIndex();
+				} else: {
+					/* return */ -1;
+				};
+			};
+			
+			inspectButton.addActionListener(
+				object: {
+					def actionPerformed( actionEvent ) {
+						def traceIndex := selectedTraceElement();
+						if: !(traceIndex == -1) then: {
+							handle.inspect(traceObjects.elementAt(traceIndex));
+						};
+					};
+				});
+			diveButton.addActionListener(
+				object: {
+					def actionPerformed( actionEvent ) {
+						def traceIndex := selectedTraceElement();
+						if: !(traceIndex == -1) then: {
+							def divingSubject := traceObjects.elementAt(traceIndex);
+							
+							(traceObjects.size()-1).downTo: traceIndex do: { | index |
+								traceObjects.removeElementAt(index - 1);
+								traceList.getModel().removeElementAt(index - 1);
+							};
+							 
+							handle.dive(divingSubject);
+						};
+					};
+				});
+			exitButton.addActionListener(
+				object: {
+					def actionPerformed( actionEvent ) {
+						handle.exit();
+					}
+				});
+		};
+		
+		// Inspector Tabs
+		inspectorTabs.add(tracePanel);
+		contentPane.add(inspectorTabs,
+			awt.GridBagConstraints.new(
+				0, 1, 3, 2, 0.0, 0.0, awt.GridBagConstraints.CENTER, 
+				awt.GridBagConstraints.BOTH, awt.Insets.new(0, 0, 0, 0), 0, 0));
+		
+		thisDialog.pack();		
+	};
+	
+	// Shows the inspector dialog
+	def show() {
+		thisDialog.setVisible(true);
+	};
+	
+	// Hides the inspector dialog
+	def hide() {
+		thisDialog.setVisible(false);
+	};
+	
+	// This method is the hook which custom inspectors are supposed to intercept
+	// in order to provide their specialised functionality
+	def initWithValue(value) {
+		def jStringRep	:= jlobby.java.lang.String.new((reflect: value).print());
+		
+		traceObjects.add(value);
+		traceList.getModel().addElement(jStringRep);
+	};
+
+	def clear() {
+		traceList.getModel().clear();
+		traceObjects.clear();
+	};
+
+	// The actual implementation of the inspect command is provided by the inspector 
+	// which will create a clone of itself with the new value as the inspected value
+	def inspect(value);
+	
+	// The actual implementation of the dive command is provided by the inspector 
+	// which will redecorate the inspector if required by the inspected value
+	def dive(value);
+	
+	// Custom inspectors are conceived as decorators of the InspectorTemplate.
+	// When diving, the passed value may require a different set of decorators.
+	// This is achieved by sending undecorate to the different decorators which
+	// provides them with a hook to gracefully remove them from the UI. On the 
+	// InspectorTemplate root which is being decorated, undecorate is a nop. 
+	def undecorate();
+};
+
+def ObjectListing := object: {
+	
+	def currentPanel;
+	def printedForm;
+	def listForm;
+	def elements;
+	
+	def init() {
+		super^init();
+		
+		currentPanel := swing.JPanel.new();
+		
+		def curLabel := swing.JLabel.new();
+		printedForm	:= swing.JTextField.new();
+			
+		def scrollPane := swing.JScrollPane.new();
+		listForm 		:= swing.JList.new();
+		
+		// Current Panel
+		currentPanel.setName("Object Listing");
+		def currentLayout 			:= awt.GridBagLayout.new();
+		currentLayout.columnWidths	:= [0, 295, 0];
+		currentLayout.rowHeights	:= [0, 172, 0];
+		currentPanel.setLayout(currentLayout);
+		
+		// Current Label
+		curLabel.setText("Inspecting: ");
+		currentPanel.add(curLabel,
+			awt.GridBagConstraints.new(
+				0, 0, 1, 1, 0.0, 0.0, awt.GridBagConstraints.CENTER, 
+				awt.GridBagConstraints.BOTH, awt.Insets.new(0, 0, 5, 5), 0, 0));
+		
+		// Printed Form of the inspected value
+		printedForm.setEditable(false);
+		currentPanel.add(printedForm,
+			awt.GridBagConstraints.new(
+				1, 0, 1, 1, 0.0, 0.0, awt.GridBagConstraints.CENTER, 
+				awt.GridBagConstraints.BOTH, awt.Insets.new(0, 0, 5, 0), 0, 0));
+				
+		// Listing of the inspected value's fields and methods
+		def listModel			:= swing.DefaultListModel.new();
+		listForm.setSelectionMode(swing.ListSelectionModel.SINGLE_SELECTION);
+		listForm.setModel(listModel);
+		scrollPane.setViewportView(listForm);
+		
+		// Listing Button Listeners
+		let: {
+			def decorated := super;
+			
+			def selectedListingElement() {
+				def currentTab 		:= decorated.inspectorTabs.getSelectedComponent();
+				if: (currentTab.getName() == "Object Listing") then: {
+					listForm.getSelectedIndex();
+				} else: {
+					/* return */ -1;
+				};
+			};
+			
+			super.inspectButton.addActionListener(
+				object: {
+					def actionPerformed( actionEvent ) {
+						def traceIndex := selectedListingElement();
+						if: !(traceIndex == -1) then: {
+							decorated.handle.inspect(elements.elementAt(traceIndex));
+						};
+					};
+				});
+			super.diveButton.addActionListener(
+				object: {
+					def actionPerformed( actionEvent ) {
+						def traceIndex := selectedListingElement();
+						if: !(traceIndex == -1) then: {
+							decorated.handle.dive(elements.elementAt(traceIndex))
+						};
+					};
+				});
+		};
+		
+		// Custom representation
+		currentPanel.add(scrollPane,
+			awt.GridBagConstraints.new(
+				0, 1, 2, 1, 0.0, 0.0, awt.GridBagConstraints.CENTER, 
+				awt.GridBagConstraints.BOTH, awt.Insets.new(0, 0, 0, 0), 0, 0));
+		
+		(super.inspectorTabs.&add).cast(awt.Component, jlobby.java.lang.Integer.TYPE)(currentPanel, 0);
+		super.inspectorTabs.setSelectedComponent(currentPanel);
+	};
+	
+	def clear() {
+		printedForm.setText(jlobby.java.lang.String.new(""));
+		// listForm.getModel().clear();
+		elements.clear();
+		super^clear();
+	};
+	
+	def undecorate() {
+		super.inspectorTabs.remove(currentPanel);
+		super := nil;
+	};
+	
+	def initWithValue(value) {
+		super^initWithValue(value);
+		
+		try: {
+			def valueMirror 	:= (reflect: value);
+			def methods 		:= valueMirror.listMethods();
+			def fields 			:= valueMirror.listFields();
+
+			def listContents 	:= jlobby.java.util.Vector.new();
+			elements		:= jlobby.java.util.Vector.new();
+
+			fields.each: { | field | 
+				// Manually wrap in a Java String to avoid the printing of double quotes
+				listContents.add( jlobby.java.lang.String.new("" + field.name + " := " + field.readField()) );
+				
+				elements.add( field.readField() );
+			};
+			
+			methods.each: { | method |
+				// Manually wrap in a Java String to avoid the printing of double quotes
+				
+				def printedForm := method.name.text + "(";
+				method.parameters.each: { |param|
+					printedForm := printedForm + param + ","
+				};
+				printedForm := printedForm + ") { " + method.bodyExpression + " }";
+				listContents.add(printedForm);
+				elements.add( method.bodyExpression );
+			};
+
+			printedForm.setText(jlobby.java.lang.String.new(valueMirror.print()));
+			listForm.setListData(listContents); 
+
+		} catch: /.at.lang.types.Exception using: { | e |
+			swing.JOptionPane.showMessageDialog(
+				super.thisDialog,
+				"Could not inspect "+value,
+				"AmbientTalk Object Inspector",
+				swing.JOptionPane.INFORMATION_MESSAGE);
+		};
+	};
+};
+
+def decoratorsFor: value {
+	[ ObjectListing ];
+};
+
+def Inspector := object: {
+	def root;
+	def installedDecorators;
+	def foobar() { nil };
+	def installDecorators(decorators) {
+		def parent	:= root;
+		decorators.each: { | decorator |
+			decorator		:= clone: decorator;
+			decorator.super := parent;
+			parent			:= decorator;
+		};
+
+		// Set the lowest decorator in the parent chain as my own parent
+		super 		:= parent;
+
+		// Allow all decorators to initialise themselves
+		super^init();
+
+		// keep track of currently active decorators
+		installedDecorators := decorators;		
+	};
+
+	def init(value, @decorators) {
+		// At the root of the inspector hierarchy, we have an InspectorTemplate
+		root := clone: InspectorTemplate;
+
+		root^buildGUI();
+		root.handle := self;
+
+		installDecorators(decorators);
+		super^initWithValue(value);	
+	};
+	
+	def inspect(value) {
+		def valueDecorators := decoratorsFor: value;
+		def newInspector := self.new(value, @valueDecorators);
+		newInspector.show();
+		newInspector;
+	};
+	
+	def dive(value) {
+		def valueDecorators := decoratorsFor: value;
+		if: !(installedDecorators == valueDecorators) then: {
+			super^undecorate();
+			installDecorators(valueDecorators);
+		};
+
+		super^initWithValue(value);
+
+		self
+	};
+
+	def exit() {
+		super^clear();
+		super^undecorate();
+		super := root;
+		super^hide();
+	};
+
+};
+
+def InspectorModule := object: {
+	def inspect(value) { Inspector.inspect(value) };
+};

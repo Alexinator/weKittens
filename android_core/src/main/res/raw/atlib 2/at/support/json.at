@@ -1,0 +1,130 @@
+import /.experimental.extensions.reactive.main;
+
+def isolateToJSON(iso) {
+	if: (reflect: iso).isTaggedAs(ReactiveField) then: {
+		isolateToJSON(iso.getValue);
+	} else: {
+	def mirror := reflect: iso;
+	def result := "{ ";
+	def count := 1;
+	def fields := mirror.listFields();
+	def length := fields.length;
+	if: (length == 0) then: { // Primitive object
+			if: (mirror.respondsTo(`toText)) then: {  // Number
+				result := iso.toText();
+			} else: {
+				if: (mirror.respondsTo(`implode)) then: {  // Table
+					def substring := "[ ";
+					def count := 1;
+					def length := iso.length;
+					if: (length == 0) then: {
+						result := "[ ]";
+					} else: {
+						iso.each: { |element|
+							substring := substring + isolateToJSON(element);
+							if: (count < length) then: {
+								substring := substring + ", ";
+							} else: {
+								substring := substring + " ]";
+							};
+							count := count + 1;
+						};
+						result := substring;
+					};
+				} else: {	// String
+					result := iso;
+				};
+			};
+	} else: {	// Non-primitive object or nil
+		if: (nil == iso) then: {	// Nil
+			result := "null";
+		} else: {
+			mirror.listFields().each: { |field|
+				if: !(field.name ==`super) then: {
+					def substring := (field.name.text() + ": " + isolateToJSON(field.readField()));
+					if: (count < length) then: {
+						substring := substring + ", ";
+					} else: {
+						substring := substring + " }";
+					};
+					result := result + substring;
+				};
+				count := count + 1;
+			};
+		};
+	};
+	result;
+	}
+};
+
+
+def jsonObjectToIsolate(jsonObject) {
+	def result := isolate: { };
+	if: ((reflect: jsonObject).respondsTo(`keySet)) then: {
+		def mirror := reflect: result;
+		def fieldNames := jsonObject.keySet().toArray();
+		fieldNames.each: { |name|
+			def fieldName := eval: (read: ("`" + name)) in: self;
+			mirror.defineField(fieldName, jsonObjectToIsolate(jsonObject.get(name)));
+		};
+		result;
+	} else: {
+		if: ((reflect: jsonObject).print() == "<java:null>") then: {
+			nil;
+		} else: {
+			if: (((reflect: jsonObject).print().length() > 7).and: 
+				{ (reflect: jsonObject).print().explode().select(1, 8).implode() == "<java:[" }) then: {
+				def index := 0;
+				def table := [];
+				while: { index < jsonObject.length } do: {
+					table := table + [ jsonObjectToIsolate(jsonObject.get(index)) ];
+					index := index + 1;
+				};
+				table;
+			} else: {
+				jsonObject;
+			};
+		};
+	};
+	result;
+};
+
+
+def jsonObjectToRisolate(jsonObject) {
+	def result := risolate: { };
+	if: ((reflect: jsonObject).respondsTo(`keySet)) then: {
+		def mirror := reflect: result;
+		def fieldNames := jsonObject.keySet().toArray();
+		fieldNames.each: { |name|
+			def fieldName := eval: (read: ("`" + name)) in: self;
+			mirror.defineField(fieldName, jsonObjectToRisolate(jsonObject.get(name)));
+		};
+		result;
+	} else: {
+		if: ((reflect: jsonObject).print() == "<java:null>") then: {
+			nil;
+		} else: {
+			if: (((reflect: jsonObject).print().length() > 7).and: 
+				{ (reflect: jsonObject).print().explode().select(1, 8).implode() == "<java:[" }) then: {
+				def index := 0;
+				def table := [];
+				while: { index < jsonObject.length } do: {
+					table := table + [ jsonObjectToRisolate(jsonObject.get(index)) ];
+					index := index + 1;
+				};
+				table;
+			} else: {
+				jsonObject;
+			};
+		};
+	};
+	result;
+};
+
+
+def jsonToIsolate(jsonString) {
+	def jsonObject := jlobby.org.json.JSONObject.&new.cast(jlobby.java.lang.String)(jsonString);
+	jsonObjectToIsolate(jsonObject);
+};
+
+self;

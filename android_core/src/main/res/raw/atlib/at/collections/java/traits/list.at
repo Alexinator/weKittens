@@ -1,0 +1,116 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2011
+ * Author: Kevin Pinte
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+
+/**
+ * AmbientTalk wrapper trait for java.util.List
+ * this trait requires a getList() and setList() method
+ * getList() should return an object implementing the java.util.List Interface
+ *
+ */
+
+import ~.collection;
+import ~.table;
+import /.at.lang.types;
+
+def ListTraitModule := object: {
+
+	deftype ListT;
+
+	def ListTrait := isolate: {
+				
+		def getList() @Required;
+		def setList() @Required;
+				
+		def getCollection()  { self.getList() };
+		def setCollection(c) { self.setList(c) };
+	
+		import /.at.collections.java.traits.collection.CollectionTrait;
+	
+		def get(index) {
+			self.getList().get(index);
+		};
+		
+		def set(index, element) { // mutator
+			self.getList().set(index, element);
+		};
+		
+		def addAt(index, element) { // mutator
+			self.getList().add(index, element);
+		};
+		
+		def removeAt(index) { // mutator
+			def remove := self.getList().&remove;
+			try: {
+				remove.cast(jlobby.java.lang.Integer.TYPE)(index);
+			} catch: /.at.lang.types.SelectorNotFound using: { |e|
+				self.getCollection().removeAt(index);
+			};
+		};
+		
+		def indexOf(element) {
+			self.getList().indexOf(element);
+		};
+		
+		def lastIndexOf(element) {
+			self.getList().lastIndexOf(element);
+		};
+		
+		def listIterator() {
+			self.getList().listIterator();
+		};
+		
+		def listIteratorAt(index) {
+			self.getList().listIterator(index);
+		};
+		
+		def subList(fromIndex, toIndex) {
+			/.at.collections.java.traits.list.createListWith(self.getList().subList(fromIndex, toIndex));
+		};
+		
+	};
+
+	def ListMirror := mirrorIsolate: {
+		def print() {
+			"<list:" + (print: self.base.toTable()) + ">";
+		};
+	};
+
+	def createListWith := { |javaList|
+		isolate: {
+			def jlist := javaList;
+			def getList()  { self.jlist };
+			def setList(l) { self.jlist := l };
+			import ListTrait;
+			import TableListTrait;
+		} taggedAs: [ListT] mirroredBy: ListMirror;
+	};
+	
+
+};
+
+ListTraitModule;

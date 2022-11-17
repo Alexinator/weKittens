@@ -1,0 +1,10 @@
+def service := object: {
+  def echo(text) {
+    system.println("Received: "+text);
+    text
+  }
+};
+
+deftype EchoService;
+
+def pub := export: service as: EchoService;

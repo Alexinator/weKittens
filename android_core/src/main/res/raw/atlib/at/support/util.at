@@ -1,0 +1,239 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/* Miscellaneous functions including:
+ *  - random number generation
+ *  - macro for executing code upon object arrival
+ *  - annotation retrieval from asynchronous messages
+ *  - creating assignment selectors ending in :=
+ *  - helper functions for native tables
+ * @author tvcutsem
+ */
+
+/**
+ * Retrieves the actual type tag object of a given object
+ * matching a given type. Most often, the object will be
+ * a message whose type tag must be retrieved for its properties.
+ * If no type tag is found, nil is returned.
+ */
+def getAnnotationOfType(obj, type) {
+  def anns;
+  def idx;
+  { |return|
+	  while: { nil != obj } do: {
+	    anns := tagsOf: obj;
+	    idx := anns.find: { |tag|
+	      tag.isSubtypeOf(type)
+	    };
+	    if: (nil != idx) then: {
+		    return(anns[idx]);
+	    };
+	
+	    if: (is: obj taggedAs: /.at.lang.types.FarReference) then: {
+		    return(nil); // stop searching
+	    } else: {
+			  obj := obj.super; // continue searching
+	    }
+		};
+	  nil
+	}.escape;
+};
+
+/**
+ * This method creates a transporter object which can be used in 'pass' meta-methods
+ * to execute code upon deserialization. The closure passed to this function
+ * should return the object with which the transported object should be replaced.
+ * Example:
+ * //inside a mirror
+ * def instancevar := ...;
+ * def pass(@args) {
+ *   uponArrivalBecome: { |instancevar|
+ *     // return object to become here
+ *   }
+ * }
+ *
+ * Implementation-wise, uponArrivalBecome: is a macro which expands into
+ * the definition of a mirrored isolate whose resolve meta-method invokes
+ * the body of the given closure.
+ */
+def uponArrivalBecome: clo {
+  deftype Isolate;
+  def mth := clo.method;
+  eval: `(object: {
+    nil
+  } taggedAs: [#Isolate] mirroredBy: (extend: defaultMirror with: { |#@(mth.parameters)|
+    def resolve() {
+      #@(mth.bodyExpression.statements)
+    }
+  } taggedAs: [#Isolate])) in: clo.context.lexicalScope;
+};
+
+def myRand := nil;
+def RandomNumberGenerator() {
+	if: (nil == myRand) then: {
+		myRand := jlobby.java.util.Random.new();
+	};
+	myRand
+};
+
+// generate a random integer in the interval [min, max[
+def randomNumberBetween(min, max) {
+	RandomNumberGenerator.nextInt(max - min) + min
+};
+
+def randomFractionBetween(min, max) {
+	RandomNumberGenerator.nextDouble() * (max - min) + min
+};
+
+def uniformRandomNumberInRange: range {
+	randomNumberBetween(range[1], range[2]);
+};
+
+def uniformRandomFractionInRange: range {
+	randomFractionBetween(range[1], range[2]);
+};
+
+def mutatorAllocator := jlobby.edu.vub.at.objects.natives.grammar.AGAssignmentSymbol.&jAlloc;
+
+// given a selector, create selector:=
+def makeMutator(selector) {
+	mutatorAllocator((print: selector) + ":=")
+};
+
+def getSelector(mutator) {
+	mutatorAllocator(mutator.text.replace: ":=$" by: { |m| "" });
+};
+
+def isMutator(selector) { selector.text ~= ".*:=$"; }; 
+
+def primitiveSelectors := [`super,`super:=,`new,`init,`==];
+def isPrimitive(selector) { primitiveSelectors.contains(selector) };
+
+// helper functions for native tables
+
+// concatenates two native tables values without duplicates 
+def makeSetUnion(t1, t2){
+	def ti := [];
+	t1.each: { |elt|
+	  if: (!ti.contains(elt)) then: {
+		  ti := ti + ([elt]);
+	  };
+	};
+	t2.each: { |elt|
+	  if: (!ti.contains(elt)) then: {
+		  ti := ti + ([elt]);
+	  };
+	};
+	ti; 
+};
+
+// adding support for getting/setting an AT object's source location
+def ATObject := jlobby.edu.vub.at.objects.ATObject;
+def getSourceLocation(obj){
+  def impl_getLocation := /.at.support.symbiosis.getClassInstanceMethod(ATObject, "impl_getLocation", []);
+  impl_getLocation.invoke(obj, []);
+}; 
+
+def UtilTest() {
+  extend: /.at.unit.test.UnitTest.new("UtilTest") with: {
+    import /.at.lang.futures; enableFutures(false);
+  
+    def testGetAnnotationOfType() {
+      def bar := extend: /.at.lang.types.Number with: { nil } taggedAs: [/.at.lang.types.TypeTag];
+      def o := object: { nil } taggedAs: [/.at.lang.types.Closure,bar];
+      def ann := getAnnotationOfType(o, /.at.lang.types.Number);
+      self.assertEquals(bar, ann);
+    };
+    
+    def testAsyncIsolateLambda() {
+      def x := 5;
+      def executor := actor: {
+        def exec(fun) { fun() }
+      };
+      when: executor<-exec(isolatelambda: { |x| x + 2 })@FutureMessage becomes: { |v|
+        self.assertEquals(7, v);
+      };
+    };
+    
+    /**
+     * Test the uponArrivalBecome function by serializing the object
+     * 'movableObj' as an object with a 'z' slot.
+     */
+    def testAsyncUponArrivalBecome() {
+      def y := 42;
+      def receiver := actor: {
+        def receive(o) { o }
+      };
+      def movableObj := object: {
+        nil
+      } mirroredBy: (mirror: {
+        def pass(@args) {
+          uponArrivalBecome: { |y|
+            isolate: { |y|
+              def z := y;
+            }
+          }
+        }
+      });
+      
+      when: receiver<-receive(movableObj)@FutureMessage becomes: { |val|
+        self.assertTrue((reflect: val).respondsTo(`z), "movable object has no z slot");
+        self.assertEquals(42, val.z);
+      };
+    };
+
+    def testRandomBetween() {
+	    1.to: 50 do: { |i|
+		    def rnd := randomNumberBetween(5, 30);
+		    self.assertLessThanOrEquals(5, rnd);
+		    self.assertLessThan(rnd, 30);
+		  };
+    };
+
+	def testConcatenationToSet() {
+		self.assertEquals("[]", print: (makeSetUnion([],[])));
+		def t := makeSetUnion([], [1,2]);
+		self.assertEquals("[1, 2]", print: t);
+		def t2 := [2,3];
+		def t3 := makeSetUnion(t,t2);
+		self.assertEquals("[1, 2, 3]", print: t3);
+		self.assertEquals("[1, 2]", print: t);
+		self.assertEquals("[2, 3]", print: t2);
+	    self.assertEquals("[1, 2, 3, 3]", print: (t3 + ([3])));
+		self.assertEquals("[1, 2, 3]", print: makeSetUnion(t, [3]));
+	};
+		
+	def testSourceLocation(){
+      def msg := <-assertTrue(true)@FutureMessage;
+      def loc := getSourceLocation(msg); 
+      self.assertEquals( msg.getLocationLine(), loc.line);
+	};
+    
+  };
+};
+
+self

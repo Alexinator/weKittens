@@ -1,0 +1,174 @@
+/** 
+ * Language support to support the introduction of case classes, 
+ * to allow Scala-like pattern matching in AmbientTalk.
+ */
+
+import /.at.lang.types;
+
+// Creates a new case object with the given name, the fields which
+// need to be inserted in the object and the context in which the 
+// case object needs to be introduced.
+def createCaseObject(name, fields, mirror, context) {
+	
+	def parsetree := `{ object: {
+			#@(fields.map: { | field | `{ def #field; } });
+			
+			def init(#@fields) {
+				#@(fields.map: { | field | `{ self . #field := #field; } })
+			};
+			
+			def ==(caseObject) {
+				def myMirror := (reflect: self);
+				def itsMirror := (reflect: caseObject);
+				
+				// Escaping continuation to exit when the first error is encountered
+				{ | return |
+					def caseFields := myMirror.grabMethod(`init).parameters;
+					
+					// Iterate over all fields of this case object
+					caseFields.each: { | field |
+						try: {
+							def myValueForField  := myMirror.invoke(self, `(.#field()));
+							def itsValueForField := itsMirror.invoke(caseObject, `(.#field()));
+
+							// Fields which have their own name as value are ignored when comparing case objects
+							((field == myValueForField).or: 
+							
+								// Non-nil fields should match with fields in the corresponding object
+								{ myValueForField == itsValueForField })
+							
+								// If none of the above conditions is satisfied, the comparison fails
+								.ifFalse: { return( false ); };
+								
+						} catch: SelectorNotFound using: { | exc |
+							// If the caseObject being tested does not have the appropriate field
+							// it cannot match with this object.
+							return( false );
+						}
+					};
+					
+					// If all tests succeeded return true
+					true
+					 
+				}.escape();
+			};
+			
+			def freeVariables() {
+				def myMirror := (reflect: self);
+				def caseFields := myMirror.grabMethod(`init).parameters;
+				
+				caseFields.filter: { | field | field == myMirror.invoke(self, `(.#field())); };
+			};
+						
+			def apply(args) {
+				self.new(@args)
+			};
+		} taggedAs: [ Closure ] mirroredBy: #mirror;
+	};
+	
+	(reflect: context.lexicalScope)
+		.defineField(name, (reflect: parsetree).eval(context));
+};
+
+def createCaseMirror(name, fields) {
+	mirror: {
+		def print() {
+			def representation := "<case:" + name;
+			
+			def marker := "(";
+			
+			fields.each: { | fieldName |
+				representation := representation + marker + self.invoke(self.base, `(.#fieldName()));
+				marker := ", ";
+			};
+			
+			representation + ")>";
+		}
+	}
+};
+
+// Simplistic variant which assumes syntactical correctness
+// i.e. a single argument is supplied which is a canonical
+// application.
+def case: closure {
+	def statements := closure.method.bodyExpression.statements;
+
+	if: (statements.length == 1) then: {
+		def name := statements[1].function;
+		def args := statements[1].arguments;
+		
+		createCaseObject(name, args, createCaseMirror(name, args), closure.context);
+	} else: {
+		system.println("expecting a single canonical application as argument");
+	}
+};
+
+def match: matchedObject with: caseExpression {
+	{ | return |
+		
+		def Closure := jlobby.edu.vub.at.objects.natives.NATClosure;
+		def Method := jlobby.edu.vub.at.objects.natives.NATMethod;
+
+		def bindings: parameterTable {
+			def mirror := reflect: matchedObject;
+			parameterTable.map: { | param |
+				mirror.invoke(matchedObject, `(.#param())));
+			};
+		};
+
+		def e := extend: matchedObject with: {
+			def case: object do: action {
+				def method     := action.method;
+				def parameters := object.freeVariables;
+				def extendedClosure := Closure.new(
+						Method.new(
+							method.name,
+							parameters,
+							method.bodyExpression),
+						action.context);
+				if: (object == super) then: {
+					return( extendedClosure.apply(bindings: parameters) );
+				};
+			};
+		};
+		
+		caseExpression.apply([ e ]);
+	}.escape()
+};
+
+def testIt() {
+	case: { Book(author, title); };
+	case: { Movie(director, title); };
+	case: { Album(artist, title); };
+
+	def loan(mediaItem) {
+		match: mediaItem with: { | e |
+			e.case: Book("George R.R. Martin", `title) do: { 
+				system.println("This guy wrote my favorite fantasy series: A song of Ice and Fire. Hope you like " + title); };
+			e.case: Book("Frank Herbert", `title) do: {
+				system.println("Sci-fi at its best is what Frank Herbert produced with Dune. Hope you enjoy reading " + title); };
+			e.case: Book("David Eddings", `title) do: {
+				system.println("This guy was the author of one of the first real fantasy books I read, I hope you enjoy " + title); };
+
+			def recentlySeen := { system.println("I've recently seen this movie, and I found it to be more than just OK. Let me know if you agree."); };
+			e.case: Movie(`director, "The Illusionist") do: recentlySeen;
+			e.case: Movie(`director, "Fracture") do: recentlySeen;
+
+			e.case: Album("Muse", `title) do: {
+				system.println("You may not be a fan yet, but believe me, you soon will be ;-). Enjoy the noise on " + title); };
+				
+			system.println("You have loaned " + mediaItem);
+		}
+	};
+	
+	loan(Book("George R.R. Martin", "Windhaven"));	
+	loan(Album("Muse", "Origin of Symmetry"));	
+	loan(Album("Manic Street Preachers", "This Is My Truth Tell Me Yours"));	
+};
+
+/* 
+def cases := /.at.lang.caseclasses; cases.testIt(); 
+def x := cases.Book("Me", "phd"); def y := cases.Book(nil, "phd"); [x, y, x == y, y == x ]
+*/
+
+self

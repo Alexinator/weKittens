@@ -1,0 +1,213 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/* This module implements service discovery composition functions.
+ *
+ * @author tvcutsem
+ */
+
+import /.at.lang.futures;
+import /.at.discovery.discovery;
+def TimerModule := /.at.support.timer;
+
+def newTrackerFor(type) {
+	(if: (is: type taggedAs: /.at.lang.oomatching.ObjectTemplate) then: {
+		/.at.discovery.templatediscovery.TemplateServiceTracker
+	} else: {
+		ServiceTracker
+	}).new(type);
+};
+
+def DiscoveryCompositionModule := object: {
+
+	// parallel discovery of N services. Returns: a future that
+	// will be resolved by a table of size N of services of the
+	// appropriate type. Note that the future will only be resolved
+	// after all N services have been discovered.
+	def discoverOneOfEach(@types) {
+		group: (types.map: { |Type|
+			future: { |reply|
+				newTrackerFor(Type).whenDiscovered: { |s|
+					reply(s)
+				}
+			}
+		})
+	};
+	
+	def whenAll: types discovered: handler {
+		when: discoverOneOfEach(@types) becomes: handler;
+	};
+
+	// discovery of N distinct services of the same type.
+	// Returns: a future that will be resolved by a table
+	// of size N containing services of the given type
+	// n should be > 0
+	def discover: n ofType: Type {
+		future: { |reply|
+			def foundServices := [];
+			def numFound := 0;
+			def sub := newTrackerFor(Type).wheneverDiscovered: { |service|
+				if: !(foundServices.contains(service)) then: {
+					foundServices := foundServices + [service];
+					numFound := numFound + 1;
+					if: (numFound == n) then: {
+						sub.cancel(); // stop searching
+						reply(foundServices);
+					};
+				};
+			}	
+		}
+	};
+	
+	def when: n ofType: Type discovered: handler {
+		when: (discover: n ofType: Type) becomes: handler;
+	};
+	
+	// variant of discover:ofType: using a higher-order function
+	// that abstracts from the counting behaviour
+	
+	/*def after: n invocationsOf: closure do: finalizer {
+		def numInvocations := 0;
+	  { |@args|
+		  if: (numInvocations < n) then: {
+			  def val := closure(@args);
+			  numInvocations := numInvocations + 1;
+			  if: (numInvocations == n) then: finalizer;
+			  val;
+		  };
+		};
+  };
+
+	def discover: n ofType: Type {
+		future: { |reply|
+			def foundServices := [];
+			def sub;
+			
+			def addService := after: n invocationsOf: { |service|
+				foundServices := foundServices + [service];
+			} do: { sub.cancel(); reply(foundServices) };
+			
+			sub := ServiceTracker.new(Type).wheneverDiscovered: { |service|
+				if: !(foundServices.contains(service)) then: { addService(service) }
+			};
+		}
+	};*/
+	
+	/**
+	 * Collects all services of a certain type discovered
+	 * within a certain timeout period. Returns a future that
+	 * will be resolved with a table of services when the given
+	 * period has elapsed.
+	 */
+	def snapshotFor: Type after: period {
+		future: { |reply|
+			def tracker := newTrackerFor(Type);
+			def found := /.at.collections.vector.Vector.new(2);
+			def snapshotTaken := false;
+			def foundSub := tracker.wheneverDiscovered: { |obj|
+				snapshotTaken.ifFalse: { found.add(obj) };
+			};
+			def lostSub := tracker.wheneverLost: { |obj|
+				snapshotTaken.ifFalse: { found.remove(obj) };
+			};
+			TimerModule.when: period elapsed: {
+				snapshotTaken := true;
+				foundSub.cancel();
+				lostSub.cancel();
+				reply(found.asTable);
+			};
+		};		
+	};
+	
+	def DiscoveryCompositionModuleTest() {
+		extend: /.at.unit.test.UnitTest.new("DiscoveryCompositionModuleTest") with: {
+			
+			def testAsyncDiscoverOneOfEach() {
+				deftype Apple;
+				deftype Pear;
+				
+				def peer := actor: { |Apple,Pear|
+					import /.at.discovery.discovery;
+					export: (isolate: { def color() { "red" } }) as: Apple;
+					export: (isolate: { def color() { "green" } }) as: Pear;
+				};
+				
+				def futureForAppleAndPear := discoverOneOfEach(Apple, Pear);
+				when: futureForAppleAndPear becomes: { |fruits|
+					def [apple,pear] := fruits;
+					self.assertEquals("red", apple.color());
+					self.assertEquals("green", pear.color());
+				};
+			};
+			
+			def testAsyncDiscoverNOfType() {
+				deftype Shape;
+				
+				def peer := actor: { |Shape|
+					import /.at.discovery.discovery;
+					export: (isolate: { def kind() { "rectangle" } }) as: Shape;
+					export: (isolate: { def kind() { "circle" } }) as: Shape;
+				};
+				
+				def futureFor2Shapes := discover: 2 ofType: Shape;
+				when: futureFor2Shapes becomes: { |shapes|
+					self.assertEquals(2, shapes.length);
+					shapes.each: { |shape|
+						self.assertTrue((shape.kind() == "rectangle").or: { shape.kind() == "circle" });
+					};
+				};
+			};
+			
+			def testAsyncSnapshot() {
+				deftype Bird;
+				
+				def makePeer(nam) {
+					actor: { |nam,Bird|
+					  import /.at.discovery.discovery;
+					  export: (isolate: { |nam|
+						  def name() { nam };
+						  def ==(other) { nam == other.nam };
+						}) as: Bird;
+				  };
+				};
+				
+				def snapshotF := snapshotFor: Bird after: 10.seconds;
+				
+				TimerModule.when: millisec(500) elapsed: { makePeer("tweety") };
+				TimerModule.when: seconds(1) elapsed: { makePeer("woody") };
+				
+				when: snapshotF becomes: { |birds|
+					self.assertEquals(2, birds.length);
+					self.assertEquals(1, (birds.filter: { |b| b.name == "tweety" }).length);
+					self.assertEquals(1, (birds.filter: { |b| b.name == "woody" }).length);					
+				};
+			};
+			
+		}
+	}; // end DiscoveryCompositionModuleTest
+	
+} // end DiscoveryCompositionModule

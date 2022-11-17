@@ -1,0 +1,669 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/*
+ * A multifuture is a future that can be resolved multiple times.
+ * We distinguish between 'bounded multifutures', which can be
+ * resolved up to a maximum number and 'unbounded multifutures'
+ * which have no upper bound. A multifuture accepts 
+ * the following listeners:
+ *
+ * whenEach: multiFuture becomes: { |val| ... }
+ *  => invoked whenever the future is resolved with a new value
+ * whenAll: multiFuture resolved: { |values| ... } ruined: { |exceptions| ... }
+ *  => invoked if all results have been gathered (only possible
+ *     if the maximum number of results is known). If there are
+ *     no exceptions, only the first code block is triggered. If there
+ *     are only exceptions, the first block is still invoked with an empty
+ *     value table.
+ *
+ * Note the following properties of multifutures:
+ * - It is allowed to register a whenAll:resolved:ruined: listener on
+ *   an 'unbounded' multifuture. However, for such multifutures, this
+ *   listener will only trigger if a timeout was specified during the
+ *   multifuture's creation. The listener is invoked upon timeout, and
+ *   later incoming results are discarded.
+ * - As with futures, it is legal to send asynchronous messages to the
+ *   multifuture, which are in turn propagated to all resolved values.
+ *   If some values are ruined, asynchronous messages containing a
+ *   multifuture are ruined. Hence, exceptions only propagate through
+ *   a pipeline of multifutures.
+ * - When a multifuture A is resolved with a multifuture B, all of B's
+ *   eventual values/exceptions become values/exceptions of A.
+ * - A whenEach:becomes: observer automatically returns a multifuture
+ *   itself. This multifuture has the same arity as the original and
+ *   is resolved/ruined with the return values of the multiple
+ *   invocations of the becomes: or catch: closures.
+ * - Like with futures, multifutures can be explicitly created, e.g.:
+ *   def [ multifut, resolver ] := makeMultiFuture(upperBound);
+ * - Multifutures can be attached to messages by annotating an
+ *   asynchronous message with the @Gather(n) type tag.
+ * - adding a when:becomes: listener on a multifuture is allowed but
+ *   only triggers for the first value/exception of the multifuture.
+ *   This allows multifutures to be used wherever regular futures
+ *   are expected.
+ *
+ * @author tvcutsem
+ */
+import /.at.support.logger;
+import /.at.lang.firstclassrefs;
+
+def log := makeLogger("[multifutures.at]", DEBUG);
+
+def FuturesModule := /.at.lang.futures;
+def LeasingModule := /.at.lang.leasedrefs;
+
+def OneWayMessage := FuturesModule.OneWayMessage;
+
+def Exception := /.at.lang.types.Exception;
+def XIllegalOperation := /.at.lang.exceptions.XIllegalOperation;
+
+// all future objects are marked with this type
+deftype MultiFuture <: FuturesModule.Future;
+
+// type that signifies that the multifuture expires after the given timeout
+deftype GatherType <: FuturesModule.FutureMessage; 
+
+def DueType := /.at.lang.futures.DueType;
+
+def makeMultiFutureMirror(maxSize) {
+	mirror: {
+
+		def upperBound := maxSize;
+		def resolvedValues := [];
+		def ruinedValues := [];
+		def inbox := [];
+		def whenEachSubscribers := [];
+		def whenAllSubscribers := [];
+		def whenBecomesSubscribers := [];
+
+		// constructor: used to initialize the base field of the new future
+		def init(@args) {
+			super^init(@args); // initialize this future's base field
+  		upperBound := maxSize;
+			resolvedValues := []; 
+			ruinedValues := [];
+			inbox := [];
+			whenEachSubscribers := [];
+			whenAllSubscribers := [];
+			whenBecomesSubscribers := [];
+		};
+
+	  // a multifuture is a special kind of far reference
+	  // therefore, this mirror mixes in the 'far reference' behaviour
+	  // Because a future is pass-by-reference, we do not inherit the
+	  // parameter-passing behaviour of the far ref trait
+	  import TEventualRef exclude pass;
+
+		def isFullyResolved() {
+			upperBound == (resolvedValues.length + ruinedValues.length);
+		};
+
+	  // Using resolveWithValue(value) rather than resolve(value) as to
+	  // not accidentally override the resolve() MOP method of the defaultMirror
+		def resolveWithValue(value) {
+			if: !isFullyResolved() then: {
+				// is the future resolved by another future?
+				if: (is: value taggedAs: FuturesModule.Future) then: {
+					// register this future as a listener with the resolved future value
+					// notice that when value is itself a multifuture, we register
+					// a whenEach observer, such that every resolved value of the
+					// multifuture becomes a value of this multifuture
+					value<-addResolutionListener(object: {
+						def notifyResolved(val) {
+							// re-resolve this future with the actual value
+							resolveWithValue(val);
+						};
+						def notifyRuined(exc) {
+							// ruin this future
+							ruinWithException(exc);
+						}
+				  // note that <-addResolutionListener is a message directed to the future's mirror
+				  // and that no future return value is required
+					})@[MetaMessage, OneWayMessage];
+				} else: {
+					resolvedValues := resolvedValues + [value];
+					inbox.each: { |msg| value <+ msg };
+					def notification := { |sub| sub<-notifyResolved(value)@OneWayMessage };
+					whenEachSubscribers.each: notification;
+					whenBecomesSubscribers.each: notification;
+					whenBecomesSubscribers := []; // clear the when:becomes: subscribers, they are triggered only once
+					if: isFullyResolved() then: {
+						whenAllSubscribers.each: { |sub| sub<-notify(resolvedValues, ruinedValues)@OneWayMessage };
+						finalize();
+					};
+				};
+				nil;	
+			}
+		};
+
+		def ruinWithException(exception) {
+			if: !isFullyResolved() then: {			
+				ruinedValues := ruinedValues + [exception];
+				inbox.each: { |msg|
+					// only propagate exceptions back along multifutures
+					if: (is: msg taggedAs: GatherType) then: {
+						msg.future<-ruinWithException(exception)@[MetaMessage,OneWayMessage];
+					};
+				};
+				def notification := { |sub| sub<-notifyRuined(exception)@OneWayMessage };
+				whenEachSubscribers.each: notification;
+				whenBecomesSubscribers.each: notification;
+				whenBecomesSubscribers := []; // clear the when:becomes: subscribers, they are triggered only once
+				if: isFullyResolved() then: {
+					whenAllSubscribers.each: { |sub| sub<-notify(resolvedValues, ruinedValues)@OneWayMessage };
+					finalize();
+				};
+		  };
+		};
+
+		// invoked when all results have been gathered on a bounded multifuture
+		def finalize() {
+			whenEachSubscribers := [];
+			whenAllSubscribers := [];
+			whenBecomesSubscribers := [];
+			inbox := [];
+		};
+
+		// adds a when:becomes: listener to the future
+		// this listener triggers only once (on the first incoming value/exception)
+		// @param sub a resolution listener
+		def addResolutionListener(sub) {
+			// notify the listener immediately if there is already a known resolved/ruined result
+			if: (resolvedValues.length > 0) then: {
+				// a resolved value has already arrived
+				sub<-notifyResolved(resolvedValues[1])@OneWayMessage 
+			} else: {
+				if: (ruinedValues.length > 0) then: {
+					// a ruined value has already arrived
+					sub<-notifyRuined(ruinedValues[1])@OneWayMessage
+				} else: {
+					// multifuture is still totally unresolved
+					whenBecomesSubscribers := whenBecomesSubscribers + [sub];
+				}
+			};
+			nil;
+		};
+
+		// adds a whenEach listener to the future
+		// @param sub a resolution listener
+		def addWhenEachListener(sub) {
+			// notify the listener immediately for each already
+			// known resolved/ruined result
+			resolvedValues.each: { |val| sub<-notifyResolved(val)@OneWayMessage };
+			ruinedValues.each: { |exc| sub<-notifyRuined(exc)@OneWayMessage };
+			// only register the listener if there are more results to come in
+			if: !(isFullyResolved()) then: {
+				whenEachSubscribers := whenEachSubscribers + [sub];
+			};
+			nil;
+		};
+
+		// adds a whenAll listener to the future
+		// @param sub a resolution listener
+		def addWhenAllListener(sub) {
+			if: isFullyResolved() then: {
+				sub<-notify(resolvedValues, ruinedValues)@OneWayMessage;
+			} else: {
+				// only register the listener if there are more results to come in
+				whenAllSubscribers := whenAllSubscribers + [sub];
+			};
+			nil;
+		};
+
+		// upon timeout, a multifuture ruins itself with a timeout exception
+		def timeout(receiver := nil, message := nil) {
+			ruinWithException(FuturesModule.XTimeoutException.new(self.base, receiver, message));
+		};
+		
+		// When the timeout specified in a multifuture is elapsed, 
+		// becomeResolved is called forcing the multifuture to be resolved 
+		// regardless of whether the multifuture is bounded or unbounded.
+		
+		// the multifuture becomes totally resolved
+		// and triggers its whenAll subscribers. It is not guaranteed
+		// that these subscribers are notified with n results, where n is
+		// the potential upper bound
+		def becomeResolved() {
+			// set upperBound to current number of registered results such that isFullyResolved
+			// will always return true
+			upperBound := resolvedValues.length + ruinedValues.length;
+			// any when:becomes: subscriber still registered is notified with a timeout exception
+			whenBecomesSubscribers.each: { |sub| sub<-notifyRuined(FuturesModule.XTimeoutException.new(self.base)) };
+			// prematurely invoke all whenAll subscribers
+			whenAllSubscribers.each: { |sub| sub<-notify(resolvedValues, ruinedValues)@OneWayMessage };
+			// de-register all listeners
+			finalize();
+		};
+
+		// provide the required methods for the TEventualRef trait
+
+		def intercept(msg) {
+			// forward the message to all already resolved values
+			resolvedValues.each: { |val| val <+ msg };
+			// propagate the exception along a multifuture pipeline
+			(is: msg taggedAs: GatherType).ifTrue: {
+				ruinedValues.each: { |exception|
+				  msg.future<-ruinWithException(exception)@[MetaMessage,OneWayMessage];
+				};
+	    };
+			// accumulate message in this future's inbox
+			if: !isFullyResolved() then: {
+				inbox := inbox + [msg];
+			};
+			nil;
+		};
+
+		def toString() {
+			if: (upperBound == nil) then: {
+				"multifuture:inf";
+			} else: {
+				"multifuture:" + upperBound;
+			}
+		};
+
+		// to satisfy the required interface of TEventualRef, not really required
+		def transportStrategy := { };
+
+	}; // end MultiFutureMirror
+
+}; // end makeMultiFutureMirror
+
+def makeMultiFuture(maxSize := nil, timeout := nil) {	
+	if: (maxSize == 1) then: {
+		// return a regular future
+		/.at.lang.futures.makeFuture(timeout);
+		
+	} else: {
+		// multifutures are empty objects mirrored by a multifuture mirror
+		def multifut := object: {
+		} taggedAs: [ MultiFuture ] mirroredBy: makeMultiFutureMirror(maxSize);
+		FuturesModule.constructResolverFor(multifut, timeout);
+	}
+}; // end makeMultiFuture
+
+def makeMultiFutureC := &makeMultiFuture;
+def Gather(upperBound := nil, timeout := nil) {
+	extend: GatherType with: { |upperBound,timeout,makeMultiFutureC,FuturesModule,GatherType|
+		def annotateMessage(msg) {
+			def [ multifut, mfresolver] := makeMultiFutureC(upperBound, timeout);
+			FuturesModule.futurize(msg, multifut, GatherType);
+		};
+	} taggedAs: [/.at.lang.types.Isolate, /.at.lang.types.TypeTag ];
+};
+
+def MultiFutureModule := object: {
+	
+	// support for first-class futures: returns a pair
+	// [ future, resolver]. The resolver can be used to easily resolve
+	// or ruin the corresponding future
+  def makeMultiFuture := &makeMultiFuture;
+
+	def GatherType := GatherType;
+	def Gather := &Gather;
+
+  // whenEach observers without catch blocks
+	def whenEach: multiFuture becomes: resolvedBlock {
+		whenEach: multiFuture becomes: resolvedBlock catch: Exception using: { |e|
+			log("re-raising uncaught exception in whenEach:becomes: because no catch-clause specified: " + e, WARNING);
+			raise: e; // no exception block specified, raise the exception in original context
+		}
+	};
+
+  // whenEach observers with generic catch-all block
+	def whenEach: multiFuture becomes: resolvedBlock catch: excBlock {
+		whenEach: multiFuture becomes: resolvedBlock catch: Exception using: excBlock
+	};
+
+	// whenEach observers with one specific catch block
+	// a whenEach observer returns itself a multiFuture of the same arity
+	// as its originator
+	def whenEach: multiFuture becomes: resolvedBlock catch: excType using: excBlock {
+		def [whenEachMultiFuture,resolver] := makeMultiFuture((reflect: multiFuture).upperBound);
+		def notify(block, val) {
+			try: {
+				resolver.resolve(block(val));				
+			} catch: Exception using: { |e|
+				resolver.ruin(e);
+			};
+			nil;
+		};
+		multiFuture<-addWhenEachListener(object: {
+			def notifyResolved(val) { notify(resolvedBlock, val); };
+			def notifyRuined(exc) {
+				if: (is: exc taggedAs: excType) then: {
+					notify(excBlock, exc);
+				} else: {
+					log("uncaught exception: " + exc + ". Can only cath: " + excType, WARNING);
+				};
+			};
+		// note that <-addWhenEachListener is a message directed to the future's mirror
+		// and that no future return value is required
+		})@[MetaMessage, OneWayMessage];
+		whenEachMultiFuture; // whenEach returns a multifuture itself
+	};
+
+	// whenAll observers:
+	
+	def whenAll: multiFuture resolved: resolvedBlock {
+		whenAll: multiFuture resolved: resolvedBlock ruined: { |excs|
+			log("uncaught exceptions in whenAll expression: " + excs, WARNING);
+		};
+	};
+	
+	// whenAll: mf resolved: { |tableOfValues| ... } ruined: { |tableOfExceptions| ... }
+	// note that the resolved or ruined closures are not invoked if there are no
+	// resolved values or exceptions.
+	def whenAll: multiFuture resolved: resolvedBlock ruined: excBlock {
+		def [futureForResolvedBlock,resolverForResolvedBlock] := FuturesModule.makeFuture();
+		def [futureForExcBlock,resolverForExcBlock] := FuturesModule.makeFuture();
+		def resolveWhenAllFuture(resolver, block, vals) {
+		  try: {
+			  resolver.resolve(block(vals));				
+			} catch: Exception using: {|e|
+				resolver.ruin(e);
+			};	
+			nil;
+		};
+		multiFuture<-addWhenAllListener(object: {
+			def notify(resolved, ruined) {
+				resolveWhenAllFuture(resolverForResolvedBlock,resolvedBlock,resolved);
+				if: (ruined == []) then: {
+					resolverForExcBlock.resolve(nil)
+				} else: {
+					resolveWhenAllFuture(resolverForExcBlock,excBlock,ruined);					
+				}
+			};
+		// note that <-addWhenAllListener is a message directed to the future's mirror
+		// and that no future return value is required
+		})@[MetaMessage, OneWayMessage];
+		// whenAll returns a pair of futures itself that will be resolved with values
+		// representing the outcome of the resolved: and ruined: blocks respectively
+		FuturesModule.group: [futureForResolvedBlock, futureForExcBlock];
+	};
+
+  // the multifuture's equivalent to future: { |reply| ... }
+  // def mf := multi: n future: { |i, reply| ... }
+  //  => invokes the closure n times and gathers the replies in the
+  //     returned multifuture. i is an index specifying the ith call
+  def multi: n future: closure {
+	  def [mf, resolver] := makeMultiFuture(n);
+	  1.to: n do: { |i|
+		  closure<-apply([i, resolver.&resolve ]);
+		};
+	  mf
+  };
+
+  /* An implementation of Jessie's multireferences in AmbientTalk/2
+   *  multiref: [ ref1, ref2,... ] returns a multireference.
+   * Any message sent to a multireference is sent to all constituent references, and a multifuture
+   * is returned which can trap the results.
+   *
+   * When the message sent to a multireference is annotated with @Due(t), the timeout
+   * is applied to the implicit multifuture, causing whenAll observers to trigger automatically.
+   * Note that the implicit multifuture of a multireference is bounded, so whenAll observers
+   * trigger automatically when all replies have been received.
+   */
+  deftype MultiReference;
+  def multiref: farrefs {
+	  object: { } taggedAs: [MultiReference] mirroredBy: (mirror: {
+		  import /.at.lang.firstclassrefs.TEventualRef exclude pass;
+		  def intercept(msg) {
+			  def timeout := nil;
+			  if: (is: msg taggedAs: DueType) then: {
+				  timeout := /.at.support.util.getAnnotationOfType(msg, DueType).timeout;
+			  };
+			
+			  def [ multifut, mfresolver ] := makeMultiFuture(farrefs.length, timeout);
+			  def mfmsg := FuturesModule.futurize(msg, multifut, GatherType);
+			  farrefs.each: { |farref| farref <+ mfmsg };
+			  multifut;
+			};
+			def toString() {
+				"group reference: "+farrefs;
+			};
+	  })
+  };
+
+  def MultiFuturesTest() {
+	  extend: /.at.unit.test.UnitTest.new("MultiFuturesTest") with: {
+
+      def testAsyncManualResolutionOfMultifuture() {
+	      def [mf,resolver] := makeMultiFuture(2);
+	      def fut := whenAll: mf resolved: { |tbl|
+		      self.assertEquals(1, tbl[1]);
+		      self.assertEquals(42, tbl[2]);
+		    } ruined: { |exc|
+			    self.fail("unexpected exception during resolution")
+			  };
+	      resolver.resolve(1);
+	      resolver.resolve(42);
+	      fut
+      };
+
+      def testAsyncManualRuinationOfMultifuture() {
+	      def [mf,resolver] := makeMultiFuture(2);
+	      deftype TestException;
+	      def XTestException := /.at.lang.exceptions.createException(TestException);
+	      def fut := whenAll: mf resolved: { |tbl|
+		      self.assertEquals(1, tbl.length);
+			    self.assertEquals(42, tbl[1]);
+		    } ruined: { |exc|
+			    self.assertEquals(1, exc.length);
+			    self.assertEquals(XTestException, exc[1]);
+			  };
+	      resolver.resolve(42);
+	      resolver.ruin(XTestException);
+	      fut
+      };
+
+      def testAsyncMessagesendToMultifuture() {
+	      def [mf,resolver] := makeMultiFuture(2);
+	      def [f1,r1] := FuturesModule.makeFuture();
+	      def [f2,r2] := FuturesModule.makeFuture();
+	      def makeReceive(name, resolver) {
+		      object: {
+		        def m(arg) {
+			        resolver.resolve(name + " called");
+			      }
+		      }
+	      };
+	      resolver.resolve(makeReceive("one", r1));
+	      mf<-m("foo");
+	      resolver.resolve(makeReceive("two", r2));
+	      FuturesModule.when: (FuturesModule.group: [ f1, f2 ]) becomes: { |values|
+		      self.assertEquals("one called",values[1]);
+		      self.assertEquals("two called", values[2]);
+		    }
+      };
+
+      def testAsyncWhenEach() {
+	      def [f1,r1] := FuturesModule.makeFuture();
+	      def [f2,r2] := FuturesModule.makeFuture();
+	      // create an unbounded multifuture
+	      def [mf,resolver] := makeMultiFuture();
+			  resolver.resolve(42);
+	      whenEach: mf becomes: { |val|
+		      self.assertEquals(42, val);
+		      r1.resolve(val);
+		    } catch: { |e|
+			    self.assertTrue(is: e taggedAs: /.at.lang.types.IllegalOperation);
+			    r2.resolve(e);
+			  };
+			  resolver.ruin(XIllegalOperation.new("test"));
+			  FuturesModule.group: [ f1, f2 ]
+      };
+
+      def testAsyncMultiFuture() {
+	      def mf := multi: 2 future: { |i, reply| reply(i) };
+		    whenAll: mf resolved: { |vals|
+			    self.assertEquals(2, vals.length);
+			    self.assertEquals(1, vals[1]);
+			    self.assertEquals(2, vals[2]);
+			  };
+      };
+
+      def testAsyncForkedMessage() {
+	      /.at.lang.futures.enableFutures(false);
+	
+	      def receivers := [object: {
+		       def m() { 24 }
+	      }, object: {
+		       def m() { 42 }
+	      } ];
+	
+	      def msg := <-m()@Gather(2);
+	      self.assertTrue(does: msg respondTo: `future, "msg not equipped with a future");
+	      self.assertTrue(is: msg.future taggedAs: MultiFuture, "resolver is not a multifuture");
+	      // send one single message to multiple receivers
+	      receivers.each: { |rcv| rcv <+ msg };
+	
+		    whenAll: msg.future resolved: { |vals|
+			    self.assertEquals(2, vals.length);
+			    self.assertEquals(24, vals[1]);
+			    self.assertEquals(42, vals[2]);
+			  };
+      };
+
+      def testAsyncMultireferences() {
+	      /.at.lang.futures.enableFutures(false);
+	
+	      def receivers := [object: {
+		       def m() { 24 }
+	      }, object: {
+		       def m() { 42 }
+	      } ];
+	
+	      def multiref := multiref: receivers;
+	      def mf := multiref<-m();
+	
+	      self.assertTrue(is: mf taggedAs: MultiFuture, "multireference does not return a multifuture");
+		    whenAll: mf resolved: { |vals|
+			    self.assertEquals(2, vals.length);
+			    self.assertEquals(24, vals[1]);
+			    self.assertEquals(42, vals[2]);
+			  };
+      };
+    
+      /* UNIT TEST MOVED TO /.bridges.m2mi.api because it depends on M2MI
+        def testAsyncSendToOmniRef() {
+				/.at.lang.futures.enableFutures(false);
+				import /.bridges.m2mi.api;
+				deftype Foo;
+				def omni := omnireference: Foo;
+				def makeObj(i) {
+				  object: {
+						def m() { i + 1 }
+					}
+				};
+				def pub1 := export: makeObj(1) asTypeTag: Foo;
+				def pub2 := export: makeObj(2) asTypeTag: Foo;
+				def mf := omni<-m()@Gather(2);
+				def mf2 := whenEach: mf becomes: { |val|
+					val * 10;
+				};
+				whenAll: mf2 resolved: { |vals|
+					self.assertEquals(2, vals.length);
+					// values may be arbitrarily ordered, so test the sum
+					self.assertEquals(50, vals[1]+vals[2]);
+				};
+      };*/
+
+      def testAsyncMultifutureTimeout() {
+	      FuturesModule.enableFutures(false);
+				
+	      // construct a timeoutable multifuture
+	      def msg := <-m()@Gather(2, FuturesModule.seconds(1));
+			//	def msg := <-m()@Gather(2, LeasingModule.seconds(5));
+	      self.assertTrue(does: msg respondTo: `future, "msg not equipped with a future");
+	      self.assertTrue(is: msg.future taggedAs: LeasingModule.LeasedRef, "resolver is not a lease");
+	
+		    whenAll: (reflect: msg.future).getPrincipal resolved: { |vals|
+			    self.assertEquals(0, vals.length);
+			  } ruined: { |e|
+					system.println("ruined with " + e.getMessage())
+				};
+      }; 
+
+      def testAsyncWhenBecomesOnMultifuture() {	
+	      // create an unbounded multifuture
+	      def [mf,resolver] := makeMultiFuture();
+	
+	      // resolve the future twice before listener is attached
+			  resolver.resolve(42);
+			  resolver.resolve(24);
+			
+			  // a when:becomes: block should only trigger once
+	      /.at.lang.futures.when: mf becomes: { |val|
+		      self.assertEquals(42, val);
+		    };
+      };
+
+      def testAsyncWhenBecomesOnMultifutureResolvedAfterwards() {	
+	      // create an unbounded multifuture
+	      def [mf,resolver] := makeMultiFuture();			
+	
+			  // a when:becomes: block should only trigger once
+	      def f := /.at.lang.futures.when: mf becomes: { |val|
+		      self.assertEquals(42, val);
+		    };
+		
+		    // resolve the future twice after the listener was attached
+			  resolver.resolve(42);
+			  resolver.resolve(24);
+			
+			  f;
+      };
+
+      // tests whether we can treat a future of upperbound 1 as a multifuture
+      def testAsyncTreatFutureAsMultifuture() {	
+	      // create a regular future by setting upperbound to 1
+	      def [fut,resolver] := makeMultiFuture(1);
+	      self.assertFalse(is: fut taggedAs: MultiFuture);
+	
+	      // see if the future can deal with whenEach and whenAll observers
+	      def fut1 := whenEach: fut becomes: { |v|
+		      self.assertEquals(42, v);
+		    };
+		
+		    def fut2 := whenAll: fut resolved: { |vals|
+			    self.assertEquals(1, vals.length);
+			    self.assertEquals(42, vals[1]);
+			  } ruined: { |excs|
+			    self.fail("unexpected exceptions: " + excs);
+			  };
+			
+			  resolver.resolve(42);
+			 
+			  FuturesModule.group: [fut1, fut2];
+	
+      };
+
+	  };
+  };
+
+};

@@ -1,0 +1,165 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Software Languages Lab, 2006 - 2010
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+**/
+
+/**
+ * This file defines a mirror to intercept
+ * invocations of methods annotated as Mutator
+ * 
+ * Example:
+ * def o := object: {
+ *   def x := 42;
+ *   def inc(n)@Mutator { x := x + n }
+ * } mirroredBy: makeMutatorInterceptor({|baseObj, invocation|
+ *   system.println((print: invocation) + " is a mutator for " + (print: baseObj));
+ * })
+}
+**/
+
+def DEBUG := false;
+def INFO := true;
+def ERR := true;
+
+def debug(@args) {
+	if: (DEBUG) then: {
+		system.println("[DEBUG] " + args);
+	};
+};
+
+def info(@args) {
+	if: (INFO) then: {
+		system.println("[INFO] " + args);
+	};
+};
+
+def err(@args) {
+	if: (ERR) then: {
+		system.println("[ERR][!] " + args);
+	};
+};
+
+// check if methods is annotated with a given typetag
+def is: someMethod annotatedAs: someAnnotation {
+	someMethod.annotations.contains(someAnnotation);
+};
+
+def IGNORE_INVOCATIONS := [`super, `==, `!=];
+
+def ignore(invocation) {
+	def res := IGNORE_INVOCATIONS.contains(invocation);
+	debug("ignore: " + invocation + ": " + res);
+	res;
+};
+
+// support for mutator methods
+deftype Mutator;
+
+def mutatorsOf: someObject {
+	(reflect: someObject).listMethods.select: {|m|
+		is: m annotatedAs: Mutator;
+	};
+};
+
+def is: methodName mutatorOfOnly: someObject {
+	try: {
+		is: (reflect: someObject).grabMethod(methodName) annotatedAs: Mutator;
+	} catch: /.at.lang.types.SelectorNotFound using: {|e| false };
+};
+
+def is: methodName mutatorOf: someObject {
+	try: {
+		(is: (reflect: someObject).grabMethod(methodName) annotatedAs: Mutator).or: {
+			debug((print: methodName) + " not a mutator of " + someObject + ", checking super: " + someObject.super);
+			is: methodName mutatorOf: someObject.super;
+		};
+	} catch: /.at.lang.types.SelectorNotFound using: {|e| 
+		try: {
+			debug((print: methodName) + " not a selector of " + someObject + ", checking super: " + someObject.super);
+			is: methodName mutatorOf: someObject.super;
+		} catch: /.at.lang.types.SelectorNotFound using: {|e|  false }
+  };
+};
+
+// intercepts methods annotated as mutator and := invocations
+// and calls a given closure with the base object and the invocation
+
+def makeMutatorInterceptor(interceptor) {
+	mirror: {
+		def invokeField(slf, invocation) {
+			debug("invokeField " + invocation + " on " + slf);
+			def returnValue := super^invokeField(slf, invocation);
+			try: {
+				def methodName := invocation;
+				if: (!ignore(invocation)) then: {
+					if: (is: methodName mutatorOf: slf) then: {
+						interceptor(self.base(), methodName);
+					};
+				};
+			} catch: /.at.lang.types.SelectorNotFound using: {|e| 
+				// do nothing
+				info("selector not found: " + e.message); 
+			};
+			returnValue; // return original return value
+		};
+		
+		
+		def invoke(slf, invocation) {
+			debug("invoke " + invocation.selector + " on " + slf);
+			def returnValue := super^invoke(slf, invocation);
+			try: {
+				def methodName := invocation.selector;
+				if: (!ignore(invocation)) then: {
+					if: (is: methodName mutatorOf: slf) then: {
+						interceptor(self.base(), methodName);
+					} else: {
+						if: ((print: methodName) ~= ".*:=$") then: {
+							interceptor(self.base(), methodName);
+						};
+					};
+				};
+			} catch: /.at.lang.types.SelectorNotFound using: {|e| 
+				// do nothing
+				info("selector not found: " + e.message); 
+			};
+			returnValue; // return original return value
+		};
+	};
+};
+
+def MutatorInterceptorModule := object: {
+	
+	deftype Mutator;
+
+	def makeMutatorInterceptor := &makeMutatorInterceptor;
+
+	def is:annotatedAs: := &is:annotatedAs: ;
+
+	def mutatorsOf: x { (&mutatorsOf:)(x) } ;
+
+	def is:mutatorOf: := &is:mutatorOf: ;
+	
+	def is:mutatorOfOnly: := &is:mutatorOfOnly: ;
+	
+};

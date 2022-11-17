@@ -1,0 +1,205 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/*
+ * This trait factors out the common behaviour of first-class
+ * eventual reference objects in AmbientTalk.
+ *
+ * @author tvcutsem
+ */
+
+def XIllegalOperation := /.at.lang.exceptions.XIllegalOperation;
+def Vector := /.at.collections.vector.Vector;
+
+def FirstClassRefModule := object: {
+
+  // an annotation identifying messages destined for the mirror itself
+  deftype MetaMessage <: /.at.lang.types.Message;
+
+  // used to end the asynchronous delegation chain between eventual refs
+  // at the meta level
+  def NilEventualRef := object: { } mirroredBy: (mirror: {
+	  def print() { "<end of eventual ref delegation chain>" };
+  });
+
+  /**
+   * This trait is meant to be mixed into a mirror definition
+   * to make the mirror behave as an eventual reference.
+   *
+   * Trait requires:
+   *  def transportStrategy; // a closure describing how to parameter-pass the reference
+   *  def intercept(msg); // a method defining how to intercept base-level messages
+   *  def toString(); // a method defining how to print the ref (without "<" ">")
+   *
+   * Optionally, a composite may redefine the 'delegate' field which specifies
+   * the object to which metamessages should be forwarded if they are not understood
+   * by the eventual ref itself. This is the default behaviour how to intercept meta-level  
+   * messages. Mirrors importing this trait can specify a different behaviour by overriding  
+   * def metaIntercept(msg); 
+	 */
+  def TEventualRef := object: {
+		
+	  // disallow synchronous access to the object
+	  def invoke(slf, inv) {
+		  // the only legal operation on references is '=='
+		  if: (`(==) == inv.selector) then: {
+				// two eventual refs are equal iff their mirrors are equal
+				self == (reflect: (inv.arguments)[1])
+		  } else: {
+				raise: XIllegalOperation.new("Cannot synchronously invoke " + inv.selector + " on " + self.toString());
+		  }
+		};
+		
+		def invokeField(slf, sel) { self.invoke(slf, `(.#sel())) };
+		
+		def receive(msg) {
+			if: (is: msg taggedAs: MetaMessage) then: {
+				self.metaIntercept(msg);
+		  } else: {
+			  self.intercept(msg); // provided by composite
+		  }
+		};
+		
+		//default behaviour to intercept meta-level messages.
+		def metaIntercept(msg) {
+			// have to go meta-meta because we need to know whether the
+			// *mirror* itself can respond to the selector
+			if: ((reflect: self).respondsTo(msg.selector)) then: {
+				self <+ msg; // process meta-message myself
+			} else: {
+				self.delegate <+ msg;// forward meta-message if not understood
+        // self.delegate<-receive(msg)@[MetaMessage,/.at.support.tracer.NoTrace]; // forward meta-message if not understood
+			}
+		};
+		
+		// the object to which meta level messages should be forwarded 
+		// if they are not understood by this first class ref itself.
+		def delegate := NilEventualRef;
+		
+		// ensure that a reference object does not become a far reference
+		// when passed remotely. Rather it implements its own by-reference
+		// parameter passing semantics
+		def pass() {
+			/.at.support.util.uponArrivalBecome: self.transportStrategy;
+		};
+		
+		def print() {
+			"<" + self.toString() + ">";
+		};
+		
+		def isTaggedAs(typeTag) {
+			typeTag.isSubtypeOf(/.at.lang.types.FarReference).or: { (self.super).isTaggedAs(typeTag) }
+		};
+		
+		def typeTags() {
+			/.at.support.util.makeSetUnion( ((self.super).typeTags()), [/.at.lang.types.FarReference]);
+		};
+
+		// disallow meta-level operations on far references
+	
+	  def clone() {
+		  raise: XIllegalOperation.new("Cannot clone " + self.toString);
+	  };
+	
+	  def newInstance(initargs) {
+		  raise: XIllegalOperation.new("Cannot create new instance of " + self.toString);
+	  };
+	
+	  def defineField(sym, obj) {
+		  raise: XIllegalOperation.new("Cannot define field "+sym+" in " + self.toString);
+	  };
+	
+	  def addField(fld) {
+		  raise: XIllegalOperation.new("Cannot add field "+fld.name+" in " + self.toString);
+	  };
+	
+	  def addMethod(mth) {
+		  raise: XIllegalOperation.new("Cannot add method "+mth.name+" in " + self.toString);
+	  };
+	
+	  //implement interface of far references
+		def retractUnsentMessages(){
+			// similar to local far references, return an empty table
+			[];
+		};
+		
+  }; // end TEventualRef
+
+  // a stateful trait encapsulating the behaviour for storing and notifying observers
+  def TObservable := object: {
+	  def self.observerCatalog;
+
+     def init(@observerTypes) {
+      self.observerCatalog := object: { };
+
+		  // rather than dynamically storing each type -> listOfObservers binding in
+		  // a hashmap, we generate an observerCatalog object that stores the bindings
+		  // as field bindings (you got to love reflection :-)
+		  def catalogMirror := (reflect: self.observerCatalog);
+		  observerTypes.each: { |type|
+			  catalogMirror.defineField(type, Vector.new(2))
+			};
+    };
+
+		// == observer management ==
+
+		def addObserver: observer to: observers {
+		  observers.add(observer);
+		  // return a subscription object that can be used to remove the observer
+		  object: {
+		    def cancel() { observers.remove(observer) }
+		  };
+		};
+
+		def notify: observers withArgs: args {
+		  observers.each: { |o| o<-apply(args)@/.at.lang.futures.OneWayMessage; }
+		};
+	
+  }; // end TObservable
+
+  def reference: closure taggedAs: tbl {
+	  def eventualrefMirror := (mirror: { import TEventualRef });
+	  object: { nil } taggedAs: tbl mirroredBy: (extend: eventualrefMirror with: closure);
+  };
+
+  def reference: closure { reference: closure taggedAs: [] };
+	
+  // auxiliary function that can be used to succinctly express interception of
+  // async messages sent to an object. Example: logging:
+  // def r := eventualref: { |rcv,msg| log(msg); rcv <+ msg } to: obj
+  //  (here, rcv refers to obj and msg to any message sent to the proxy)
+  def eventualref: closure to: object {
+	  object: { } mirroredBy: (mirror: {
+		  import TEventualRef exclude pass;
+		  def intercept(msg) { closure(object, msg) };
+	    def toString() { "farref proxy to " + object };		
+		  // def transportStrategy; // not needed: proxy is pass-by-far-reference
+	  })
+  };
+
+}; // end FirstClassRefModule
+

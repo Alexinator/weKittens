@@ -1,0 +1,117 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+**/
+
+/* This is the native implementation of service discovery, for use by
+ * the ambient refence abstraction, in particular the extensional impl.
+ *
+ * Abstractions:
+ *  when: type discovered: { |serviceDesc| ... } -> subscription
+ *  whenever: type discovered: { |serviceDesc| ... } -> subscription
+ *  whenever: type lost: { |serviceDesc| ... } -> subscription
+ *  export: object as: type -> publication
+ */
+def nativeWhen:			type discovered:	handler { when: type discovered: handler };
+def nativeWhenever: type discovered:	handler	{ whenever: type discovered: handler };
+def nativeExport: 	obj	 as: 					type 		{ export: obj as: type };
+
+def DiscoveryModule := object: {
+	
+   /**
+     * An object that, when deserialized, resolved back to this module
+     */
+	def capsule := /.at.support.util.uponArrivalBecome: {
+	  /.at.discovery.pure_discovery;
+	};
+	
+	/**
+	 * Invokes the handler with a discovered service matching the
+	 * given type. If multiple discovered services are present,
+	 * a non-deterministically chosen service is provided.
+	 * Once the handler was triggered, it is automatically
+	 * cancelled, such that it cannot be applied more than once.
+	 *
+	 * Returns a subscription object which can be used to cancel
+	 * the registration of the handler. Note that canceling the
+	 * handler does not guaruantee that it will never be invoked
+	 * (an apply message for the handler might be pending in the
+	 *  actor's inbox at the time cancel is invoked)
+	**/
+	def when: type discovered: handler {
+		nativeWhen: type discovered: handler;
+	};
+	
+	/**
+	 * Invokes the handler with a discovered service matching the
+	 * given type. The handler is triggered for every discovered
+	 * service. It may be invoked for the same service, but only
+	 * when that same service has been unavailable for longer than
+	 * the discovery manager's recall period.
+	 *
+	 * Returns a subscription object which can be used to cancel
+	 * the registration of the handler. Note that canceling the
+	 * handler does not guaruantee that it will never be invoked
+	 * (an apply message for the handler might be pending in the
+	 *  actor's inbox at the time cancel is invoked)
+	**/
+	def whenever: type discovered: handler {
+		nativeWhenever: type discovered: handler;
+	};
+	
+	/**
+	 * Invokes the handler with a discovered service matching the
+	 * given type. The handler is triggered every time that a
+	 * previously discovered service is 'forgotten' by the tracker.
+	 * That is: the handler is triggered if a previously discovered
+	 * service now becomes unresponsive.
+	 *
+	 * Returns a subscription object which can be used to cancel
+	 * the registration of the handler. Note that canceling the
+	 * handler does not guaruantee that it will never be invoked
+	 * (an apply message for the handler might be pending in the
+	 *  actor's inbox at the time cancel is invoked)
+	**/
+	def whenever: type lost: handler {
+		whenever: type discovered: { |o|
+		 def pub := when: o disconnected: {
+		   block<-apply([o]);
+		   pub.cancel();
+		 }
+		}
+	};
+	
+	/**
+	 * Make a service object available for discovery.
+	 *
+	 * Returns a publication object which can be used to unexport
+	 * the object. Note that unexporting the object only makes
+	 * the object unavailable for new discovery requests, it
+	 * does not take the object itself offline.
+	**/
+	def export: obj as: type {
+		nativeExport: obj as: type
+	};
+} // end DiscoveryModule

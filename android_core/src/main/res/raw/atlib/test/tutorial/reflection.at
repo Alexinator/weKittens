@@ -1,0 +1,120 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/**
+ * unit test for the reflective programming tutorial chapter
+ * @author tvcutsem
+ */
+extend: /.at.unit.test.UnitTest.new("ReflectionTutorial") with: {
+
+		def testIntrospectionAndSelfModification() {
+		    def createPoint(xx,yy) {
+			  object: {
+                def x := xx;
+                def y := yy;
+                def distanceToOrigin() { (self.x*self.x + self.y*self.y).sqrt };
+              };
+            };
+            def p := createPoint(2,3);
+            // request a mirror on p via the mirror factory
+            def mirrorOnP := reflect: p;
+            // >><mirror on:<object:2493837>{x,x:=,...}>
+            def names := mirrorOnP.listSlots().map: {|slot| slot.name };
+            // >>[super, super:=, x, x:=, y, y:=, distanceToOrigin]
+            self.assertEquals(7, names.length);
+            self.assertTrue(names.contains(`super));
+            self.assertTrue(names.contains(`super:=));
+            self.assertTrue(names.contains(`x));
+            self.assertTrue(names.contains(`x:=));
+            self.assertTrue(names.contains(`y));
+            self.assertTrue(names.contains(`y:=));
+            self.assertTrue(names.contains(`distanceToOrigin));
+            
+            // let's add a z coordinate to our point
+            def [zaccessor, zmutator] := lobby.at.lang.values.createFieldSlot(`z,0);
+            // we only add the accessor, so the slot is read-only
+            mirrorOnP.addSlot(zaccessor);
+            // let's test it:
+            // > p.z
+            // >> 0
+            self.assertEquals(0, p.z);
+            // we can also read slots reflectively:
+            def x := mirrorOnP.grabSlot(`x);
+            // >> <accessor method for:x>
+            self.assertEquals("<accessor method for:x>", print: x);
+            // and we can also invoke methods reflectively:
+            def res := mirrorOnP.invoke(p, lobby.at.lang.values.createInvocation(`distanceToOrigin,[],[]));
+            // >> 3.605551275463989
+            self.assertEquals(4, res.round());
+            // finally, we can remove slots...
+            mirrorOnP.removeSlot(`z);
+            self.assertFalse( mirrorOnP.respondsTo(`z) );
+		};
+		
+		def testMiragesWithClosureConstructor() {
+		  def invoked := false;
+		
+		  def createTracingMirror(baseObject) {
+            extend: defaultMirror.new(baseObject) with: {
+              def invoke(slf, invocation) {
+                // system.println("invoked "+invocation.selector+" on "+baseObject);
+                invoked := true;
+                super^invoke(slf, invocation);
+              }
+            }
+          };
+          
+          def mirage := object: {
+            def foo() { 42 };
+          } mirroredBy:{ |emptyBase| createTracingMirror(emptyBase) };
+          
+          self.assertFalse(invoked);
+          self.assertEquals(42, mirage.foo());
+          self.assertTrue(invoked);
+		};
+		
+		def testMiragesWithPrototypeConstructor() {
+		  def invoked := false;
+		  
+		  def TracingMirror := mirror: {
+            def invoke(slf, invocation) {
+              // system.println("invoked "+invocation.selector+" on "+self.base);
+              invoked := true;
+              super^invoke(slf, invocation);
+            }
+          };
+          
+          def mirage := object: {
+            def foo() { 42 };
+          } mirroredBy: TracingMirror;
+          
+          self.assertFalse(invoked);
+          self.assertEquals(42, mirage.foo());
+          self.assertTrue(invoked);
+		};
+		
+};

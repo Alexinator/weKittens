@@ -1,0 +1,89 @@
+/* This example is an adaptation of the 'Flea Market' example from
+ * the Location-based Publish/Subscribe paper by Eugster et. al
+ * (UNIL tech report DOP-20050124)
+ */
+def Serializable := /.at.lang.types.Isolate;
+
+import /.at.lang.futures;
+enableFutures(false);
+
+def Advertisement := object: {
+	def publisher;
+	def description;
+	def init(item) {
+		publisher := item;
+		description := item.description;
+	};
+} taggedAs: [ Serializable ];
+
+def Item := object: {
+
+  def category; // a service type classifying the Item
+  def description; // a description of the offered/required item
+  def contactDetails; // contact details when discovering buyer/seller
+  
+  def init(cat, desc, contact) {
+	  category := cat;
+	  description := desc;
+	  contactDetails := contact;
+  };
+
+  def retrieveContactDetails(buyerInfo) {
+	  system.println("found interested buyer for "+description+". Contact: "+buyerInfo);
+	  // return the contact details
+	  contactDetails
+  };
+
+	def placeSupply() {
+		// publish an advertisement of this item's category type into the ambient
+		def publication := export: Advertisement.new(self) as: category;
+		// the publication can be used to unexport the advertisement
+		publication;
+	};
+
+	def placeDemand(filter, listener) {
+		// subscribe to advertisements of this item's category type
+		def subscription := whenever: category discovered: { |advertisement|
+			filter(advertisement.description).ifTrue: {
+				when: (advertisement.publisher<-retrieveContactDetails(self.contactDetails)@FutureMessage) /*@Timeout(minutes(2))*/ becomes: { |sellerContact|
+					listener<-apply([sellerContact]);
+				}// catch: TimeoutException using: { |e| /* ignore the advertisement */ };
+			};
+		};
+		// the subscription can be used to cancel the event registration
+		subscription;
+	};
+};
+
+def FleaMarket := object: {
+	def offer: type description: text contact: contact {
+		Item.new(type, text, contact).placeSupply();
+	};
+	def request: type match: filter whenFound: listener {
+		Item.new(type, "", "").placeDemand(filter, listener);
+	};
+	def request: type {
+		request: type match: { |descr| true } whenFound: { |contact|
+			system.println("found seller for "+type+". Contact: "+ contact);
+		};
+	};
+	
+	def testFleaMarket() {
+		extend: /.at.unit.test.UnitTest.new("FleaMarketTest") with: {
+			
+			def testAsyncFleaMarketDemo() {
+				system.println("executing test");
+				def [fut,res] := makeFuture();
+				deftype FooItem;
+				def remoteParty := actor: { |FooItem|
+					~.UbiFleaMarket.offer: FooItem description: "a foo" contact: "1-800-FOOBAR";
+				};
+
+				request: FooItem match: { |descr| descr == "a foo" } whenFound: { |contact|
+					res.resolve(contact);
+				};
+				fut;
+			};
+		};
+	};
+};

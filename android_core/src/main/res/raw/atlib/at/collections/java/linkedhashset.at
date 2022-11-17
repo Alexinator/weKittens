@@ -1,0 +1,84 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2011
+ * Author: Kevin Pinte
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+
+/**
+ * AmbientTalk wrapper for java.util.LinkedHashSet
+ * supports interface of java.util.LinkedHashSet
+ * supports interface of AmbientTalk table
+ *   except for operations which require indexing (e.g. at() or find:)
+ * supports (de)serialization using asCode: and fromCode:
+ *
+ */
+
+import ~.traits.collection;
+import ~.traits.table;
+
+def JLinkedHashSet := jlobby.java.util.LinkedHashSet;
+
+def LinkedHashSetModule := object: {
+
+	deftype LinkedHashSetT;
+
+	def LinkedHashSetMirror := mirrorIsolate: {
+		
+		def print() {
+			"<linkedhashset:" + (print: self.base.toTable()) + ">";
+		};
+		
+		def asCode() {
+			def elements := asCode: (self.base.toTable());
+			"{ def elements := " + elements + " ; LinkedHashSet.new(elements) }()";
+		};
+		
+	};
+	
+	def LinkedHashSet := isolate: {
+			
+		// wrapped java vector
+		def jlhashset := JLinkedHashSet.new();
+		
+		// initialization
+		def init(collection := []) { 
+			// a collection that supports .each: {|e| ... }
+			self.jlhashset := JLinkedHashSet.new();
+			collection.each: { |e| self.add(e) };
+			self;
+		};
+		
+		def getCollection() {
+			self.jlhashset;
+		};
+		
+		import CollectionTrait;
+		import TableTrait;
+		
+	} taggedAs: [LinkedHashSetT, CollectionT, TableT] mirroredBy: LinkedHashSetMirror;
+	
+};
+
+LinkedHashSetModule;

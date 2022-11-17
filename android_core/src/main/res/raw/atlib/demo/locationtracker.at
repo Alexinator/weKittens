@@ -1,0 +1,119 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/* A simple location tracker example.
+ * Setting: a nomadic ad hoc network where some services are
+ * Location Servers, while others are mobile Location Clients.
+ * The clients continually submit their location to a location server.
+ * The servers are considered to be linked up via the nomadic infrastructure.
+ * This allows remote mobile clients in other parts of the network
+ * to query the server for the position or track of another mobile client.
+ *
+ * @author tvcutsem
+ */
+
+import /.at.support.timer;
+import /.at.lang.ambientrefs(/.at.discovery.ar_intensional_impl);
+import /.at.lang.futures exclude seconds, millisec, minutes, Future, Due;
+
+deftype LocationService;
+
+def makeLocationServer(sid) {
+	def locations := jlobby.java.util.HashMap.new();
+	def service := object: {
+		def queryPath(pid) { locations.get(pid) };
+		def queryLast(pid) {
+			def l := locations.get(pid);
+			if: (nil != l) then: { l[l.length] };
+		};
+		def submitLocation(pid, loc) {
+			system.println("client " + pid + " submitted location " + loc + " to server " + sid);
+			def l := locations.get(pid);
+			if: (nil != l) then: {
+				locations.put(pid, l + [loc]);
+			} else: {
+				locations.put(pid, [loc])
+			};
+		};	
+	};
+	export: service as: LocationService;
+	service
+};
+
+def makeClient(pid, updatePeriod, sensor) {
+	def conn := ambient: LocationService;
+	whenever: updatePeriod elapsed: {
+		def loc := sensor.detectCurrentLocation();
+		if: (nil != loc) then: {
+		  conn<-submitLocation(pid, loc)@[One,Sustain,Oneway]
+		}
+	};
+};
+
+
+def LocationTrackerTest() {
+ extend: /.at.unit.test.UnitTest.new("LocationTracker test") with: {
+
+      // returns locations [1,1], [2,2], ..., [n,n], nil, nil, ...
+      def makeDummyLimitedLocationSensor(n) {
+        def [prevX,prevY] := [0,0];
+        def tries := 0;
+        object: {
+          def detectCurrentLocation() {
+	        tries := tries + 1;
+	        if: (tries <= n) then: {
+	          prevX := prevX + 1;
+	          prevY := prevY + 1;
+	          [prevX,prevY];
+	        } else: {
+	          nil;
+	        }
+          };
+        };
+      };
+
+	  def testAsyncTrack() {
+		  def [fut,res] := makeFuture();
+			def server := makeLocationServer("Enigma");
+			def sensor := makeDummyLimitedLocationSensor(2);
+			
+			def client1 := makeClient("Alan Turing", seconds(1), sensor);
+			// def client2 := makeClient("Alonzo Church", seconds(3), sensor);
+
+            when: 4.seconds elapsed: {
+              client1.cancel();
+			  res.resolve(when: server<-queryPath("Alan Turing")@FutureMessage becomes: { |v|
+			    self.assertEquals("[[1, 1], [2, 2]]", print: v);
+			  });
+            };
+
+			fut;
+	  };
+  }; 
+};
+
+self

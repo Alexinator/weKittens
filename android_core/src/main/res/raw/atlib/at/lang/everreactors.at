@@ -1,0 +1,160 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2009
+ * Authors: Ambient Group at SOFT
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+
+/* Virtual continuous distributed subscription based on E's EverReactor/EverReporter pairs:
+ * http://erights.org/javadoc/org/erights/e/elib/slot/EverReporter.html
+ *
+ * Typical usage:
+ *  def myReporter := object: {
+ *    import makeEverReporter(initState);
+ *    // override getValue and setValue if desired
+ *  }
+ *
+ *  def reactor := whenever: myReporter updated: { |newState|
+ *    // react to new state until satisfied, then invoke
+ *    // reactor.cancel();
+ *  }
+ *
+ * @author tvcutsem
+ */
+import /.at.support.timer;
+
+// this trait requires its composite to implement the method 'reactTo(newValue)'
+def makeEverReactorTrait(delay := 0.seconds) {
+	def active := true;
+	def lastSeenGeneration := -1;
+	
+	object: {
+		def init(reporter) {
+			if: (nil != reporter) then: {
+			  reporter<-whenUpdated(self);
+			};
+		};
+		
+    // A report from an EverReporter that newValue is current as of generation number
+    // newReporterGen of optNewReporter's local numbering.
+	  def reactToUpdate(newValue, newReporterGen, optNewReporter) {
+		  if: active then: {
+			  if: (newReporterGen > lastSeenGeneration) then: {
+				  lastSeenGeneration := newReporterGen;
+				  self<-reactTo(newValue);
+				  if: (nil != optNewReporter) then: {
+						when: delay elapsed: {
+						  optNewReporter<-whenUpdated(self, newReporterGen+1);
+						};
+				  };
+			  };
+		  };
+	  };
+	  def cancel() { active := false; }
+	};
+};
+
+// this trait does not require its composite to implement
+// any specific methods. However, a composite may decide to
+// override the value accessor/mutators to perform additional
+// behavior upon reading or writing the state.
+def makeEverReporterTrait(initValue := nil) {
+	def lastValue := initValue;
+	def generation := 0;
+  def reactors := [];
+  object: {
+	  // Synchronously return the locally stored value, which may be stale if this Reporter is also a Reactor downstream from a more authoritative Reporter.	
+		def	value() { lastValue };
+
+		// A typical EverReporter will normally double as a read-only Slot,
+		// in which case it should implement setValue to simply throw an informative exception.
+		def value:=(newValue) {
+			lastValue := newValue;
+			generation := generation + 1;
+			reactors.each: { |r|
+				r<-reactToUpdate(newValue, generation, self);
+			};
+			reactors := []; // clear list of reactors
+		};
+	  // This is how a downstream EverReactor subscribes (or re-subscribes) with this EverReporter.	
+		def	whenUpdated(reactor, lastGeneration := -1) {
+			if: (lastGeneration < generation) then: {
+				reactor<-reactToUpdate(lastValue, generation, self);
+			} else: {
+				reactors := reactors + [reactor];
+			}
+		};
+		
+		def cancel() {
+			reactors.each: { |r|
+				r<-reactToUpdate(lastValue, generation, nil);
+			};
+			reactors := [];
+		};
+  };
+};
+
+object: {
+	
+	// closure is expected to be a unary closure consuming a new value
+	def whenever: reporter updated: closure {
+		object: {
+			import makeEverReactorTrait();
+			self.init(reporter);
+			def reactTo(newValue) {
+				closure(newValue);
+			}
+		};
+	};
+	
+	def testReporter(refreshRate, lifespan) {
+		def reporter := object: {
+			import makeEverReporterTrait(0);
+		};
+		def pub := whenever: refreshRate elapsed: {
+			def newValue := reporter.value + 1;
+			reporter.value := newValue;
+			system.println("reporter: "+newValue)
+		};
+		when: lifespan elapsed: {
+			reporter.cancel();
+			pub.cancel();
+			system.println("reporter: stopped");
+		};
+		reporter;
+	};
+	def testReactor(reporter, refreshRate, lifespan) {
+		def reactor := object: {
+			import makeEverReactorTrait(refreshRate);
+			self.init(reporter);
+			def reactTo(newValue) {
+				system.println("reactor: "+ newValue);
+			}
+		};
+		when: lifespan elapsed: {
+			reactor.cancel();
+			system.println("reactor: stopped");
+		};
+	};
+}

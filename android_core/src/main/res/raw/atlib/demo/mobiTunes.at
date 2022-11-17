@@ -1,0 +1,250 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/* The MobiTunes music player is a peer-to-peer application meant to be
+ * deployed on mobile ad hoc networks. Each music player has a local
+ * music library filled with Song objects. When a music player discovers
+ * another player in its environment (its 'ambient'), both music players
+ * engage in a library exchange session, where they exchange the (index of)
+ * their music library. This way, a music player can e.g. notify its owner
+ * whenever someone is found in the environment with a similar taste in music.
+ *
+ * For more detailed information, cfr. the paper 'Object-oriented Coordination
+ * in Mobile Ad Hoc Networks', in Proceedings of the 9th internation conference
+ * on coordination models and languages (COORDINATION '07), 2007.
+ *
+ * Added changes for leasing DSAL paper - egonzale
+ * @author tvcutsem
+ */
+
+def AmbientRefsM := /.at.lang.ambientrefs_old; // for discover:
+import /.at.lang.futures; // for when:becomes:
+enableFutures(false);
+import /.at.lang.leasedrefs exclude minutes, seconds, millisec; // for leasing primitives
+
+// the library consists of simple song objects
+def Song := object: {
+	def artist := nil;
+	def title := nil;
+	def timesPlayed := 0;
+	def init(artist, title) {
+		self.artist := artist;
+		self.title := title;
+		self.timesPlayed := 0;
+	};
+	// override equality of songs to be based on their artist and title
+	// rather than on their object identity
+	def ==(other) {
+		(artist == other.artist).and: {title == other.title};
+	};
+	def play() {
+		timesPlayed := timesPlayed + 1;
+	};
+	def toString() {
+		artist + " - " + title + "(" + timesPlayed + ")";
+	};
+};
+
+// we represent song libraries as vectors, hence import the Java Vector class
+def Vector := jlobby.java.util.Vector;
+
+// when users share 25% of their songs, we signal a match
+def THRESHOLD := 25;
+
+// music players are exported using this service type
+deftype MusicPlayer;
+
+// this prototype is the result of loading the mobiTunes file
+def MobiTunesPrototype := object: {
+  def myLib := Vector.new(); // the local user's songs library
+  def userName := jlobby.java.lang.System.getProperty("user.name");
+  
+  def notifyOnMatch := { |user, percentage| nil };
+  
+  def init(userName, notifier := notifyOnMatch) {
+	  self.userName := userName;
+	  myLib := Vector.new();
+	  notifyOnMatch := notifier;
+  };
+
+	def notification(@texts) {
+		system.println("[mobiTunes "+userName+"] ", @texts);
+	};
+
+  // create an the interface object that will be exported
+  def createInterface() {
+	// this object remains exported forever
+		object: {
+			// returns a session object encapsulating the state of the music library exchange process
+			def openSession(remoteUser) {
+				notification("opening new session for " + remoteUser);
+				def senderLib := Vector.new(); // to store the sender's music library
+			
+				// garbage collect resources held by this session upon disconnection
+				/*when: remotePlayer disconnected: {
+					senderLib := nil;
+				};*/
+
+				 /* 
+	         * The session is exported using a lease for 10 minutes that is renewed
+	         * each time it receives a message. The lease is explicitly
+	         * revoked when a client terminates the exchange by calling the endExchange.
+	         */
+				def session := renewOnCallLease: minutes(1) for: ( object: {
+					// invoked by remote peer to transmit one single song
+		      def downloadSong(artist, title) {
+			      notification("downloaded song: " + artist + " - " + title + " from " + remoteUser);
+			      senderLib.add(Song.new(artist, title));
+			      "ok"; // tell sender that song was successfully received
+		      };
+		      
+		      // invoked by remote peer to signal that all songs have been sent
+					// (after having invoked this method, the session object expires)
+		      def endExchange() {
+			      revoke: session; // takes the session offline
+			      notification("finished exchanging library with " + remoteUser + " sharing " + senderLib.size() + " songs");
+			      senderLib.retainAll(myLib); // senderLib := intersection(senderLib, myLib)
+					  def matchRatio := (senderLib.size() * 100 / (myLib.size()+0.01)).round();
+						if: (matchRatio >= THRESHOLD) then: {
+						  notification("Found user ", remoteUser, " with similar taste in music (",matchRatio,"% match)");
+						  notifyOnMatch(remoteUser, matchRatio);
+						} else: {
+						  notification("User ", remoteUser, " does not share your taste in music (",matchRatio,"% match)");
+						};
+						"done";
+				  };
+			  });
+				// Notifies when a session with another remote music player expires.
+				// Note this is a when:expired: listener registered on a server lease.
+				when: session expired: {
+				  notification("session with " + remoteUser + " timed out.");
+				};
+				// return session object (which will be leased referenced) to client
+			  session;
+		  };
+
+		  def getSizeOfLibrary() { myLib.size() };
+	  };
+  };
+
+   // invoke this method to make the music player discover another music player
+   def goOnline() {
+	   export: createInterface() as: MusicPlayer;
+	
+	   // uses an ambient reference to discover one other music player
+	   def musicPlayerFuture := AmbientRefsM.ambient: MusicPlayer;
+     when: musicPlayerFuture becomes: { |ambientReference|
+	
+	     notification("discovered new music player: " + ambientReference);
+	     
+	     // upon discovery, ask for the creation of a new session object
+	     when: ambientReference<-openSession(userName)@Due(minutes(1)) becomes: {  |session|
+		     // start to exchange libraries by pushing own library to remote peer via the session
+		     def iterator := myLib.iterator(); // to iterate over own music library
+		     def sendSongs() { // auxiliary function to send each song
+		       if: (iterator.hasNext()) then: {
+		         def song := iterator.next();
+		         when: session<-downloadSong(song.artist, song.title)@Due(leaseTimeLeft: session) becomes: { |ack|
+			         notification("sent song " + song.artist + " - " + song.title);
+		           sendSongs(); // recursive call to send the rest of the songs
+		         } catch: { |exception| notification("stopping exchange: " + exception) };
+		       } else: {
+			       // all songs sent, signal the end of the exchange
+		         session<-endExchange()@OneWayMessage;
+		       };
+		       // it is better to return nil than to return a future that will resolve the future
+		       // of the previous recursive call to sendSongs()
+		       nil;
+		     };
+		     notification("starting to send songs");
+		     sendSongs();
+			 } catch: TimeoutException using: { |e| 
+					notification("unable to open a session"); 
+			 };
+		   // failure handling
+	     whenever: ambientReference disconnected: {
+		     notification("music player disconnected: ", ambientReference);
+		     // do nothing upon disconnection: keeps the session alive until reconnect
+		     // alternative strategy is to clean up the session:
+		
+		     // discard all messages still buffered by the ref + resolve their futures
+		     // with exception + respond to all future incoming messages by resolving their
+		     // future with an exception
+		     /*rebind: session to: (object: { nil } mirroredBy: (mirror: {
+			     def doesNotUnderStand(selector) {
+				     deftype DisconnectedException <: /.at.lang.types.Exception;
+				     raise: object: { nil } taggedAs: [ DisconnectedException ]
+			     };
+		     }));*/
+		
+		   };
+		   whenever: ambientReference reconnected: {
+			   notification("music player reconnected: ", ambientReference);
+		   };
+		};
+	};
+	
+	def addSong(artist, title) {
+		myLib.add(Song.new(artist, title));
+	};
+	
+	// DEMO: run within one VM, creates two local mobiTunes applications, one within
+	// the root actor, the other within another local actor
+	def MobiTunesTest() {
+	  extend: /.at.unit.test.UnitTest.new("mobiTunes test") with: {		
+		def testAsyncMobiTunes() {
+		  def [fut,res] := /.at.lang.futures.makeFuture();
+		  def test := self;
+		  
+		  // expecting peerA to find peerB and to have a 66% match
+		  def peerA := /.demo.mobiTunes.new("A", { |usr, match|
+		    test.assertEquals("B", usr);
+		    test.assertEquals(66, match);
+		    res.resolve(true);
+		  });
+		  peerA.addSong("1", "AB");
+		  peerA.addSong("2", "AB");
+		  peerA.addSong("3", "A");
+		  peerA.goOnline();
+		  def otherPeerHost := actor: {
+		    def peerB := /.demo.mobiTunes.new("B");
+		    peerB.addSong("1", "AB");
+		    peerB.addSong("2", "AB");
+		    peerB.addSong("3", "B");
+		    peerB.addSong("4", "B");
+		    peerB.addSong("5", "B");
+		    peerB.addSong("6", "B");
+		    peerB.goOnline();
+		  };
+		  
+		  fut;
+		};
+	  };
+	};
+	
+};
+

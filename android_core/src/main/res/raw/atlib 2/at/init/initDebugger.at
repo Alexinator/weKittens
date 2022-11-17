@@ -1,0 +1,26 @@
+/* Initialization code to make an actor debugeable. 
+ * Used instead of init.at when -Xdebug option specified.
+ * More information about AmbientTalk's debugger called REME-D at AmbientTalk google code site.
+ * @author egonzale
+*/
+
+// the following lines of code import the original init.at file
+// this should be as simple as:
+//   import /.at.init.init;
+// but, since namespaces are objects, they have an 'init' method
+// that shadows the 'init' namespace. To load the 'init' namespace
+// or file, we explicitly trigger the namespace its "loading" behavior
+// by triggering its doesNotUnderstand method.
+(reflect: /.at).doesNotUnderstand(`init);
+import (reflect: /.at.init).doesNotUnderstand(`init)();
+
+//Make an actor debugeable by installing a mirror which contains a dedicated field.
+let: { |dam := reflectOnActor()| 
+  // add the debuggeable slot
+  def newDefaultMirror := extend: dam with:{
+   def debuggeable := true;
+  };
+  dam.becomeMirroredBy: newDefaultMirror;
+}; 
+
+self;

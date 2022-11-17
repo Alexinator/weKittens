@@ -1,0 +1,56 @@
+
+def makeTeamMember(ringSize,id) {
+	actor: { |ringSize, id|
+		
+		import /.at.lang.totam;
+		def descriptor := isolate: {|id|};
+		def myTS := makeTupleSpace(descriptor);
+		def count := 0;
+
+		myTS.whenever: (tuple:["Ring", var: `number, var: `from]) read: { 
+			count := count+1;
+			system.println("Receiving :: " + number + " from " + from);
+			system.println("I already gotten ::: :: " + count + " >> " + id );
+		};
+		
+		def coodinateTuple(number,coordinate) {
+			def ringProtocol := propagationProtocol: { |number,ringSize,coordinate,id|
+				def count := 1;
+				def decidePropagation(descriptor) {
+					true;
+					//if: (ringSize == count) then: { false } else: { descriptor.id == count *100}; 
+				};
+				def changeTupleContent(ts) {
+					//self.changed := true; 
+					count := count+1; 
+					self;
+				}; 
+			  def decideDie(ts){ 
+					ringSize == count;
+				};
+			};
+			tuple: ["Ring", (number + id), coordinate] withPropagationProtocol: ringProtocol;
+		};
+		
+		def sendCoordinates(number) {
+			while: { number > 0 } do: {
+				number := number - 1;
+				myTS.inject: coodinateTuple(number, id);			
+			};
+		};
+			
+	};
+};
+
+def amount := 1;
+def ringSize := 10;
+
+def Alice := makeTeamMember(ringSize,0);
+Alice<-sendCoordinates(amount);
+def count := 1;
+while: { count < ringSize } do: {
+	makeTeamMember(ringSize,count * 100);
+	count := count +1;
+};
+
+

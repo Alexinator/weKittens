@@ -1,0 +1,167 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Software Languages Lab, 2006 - 2011
+ * Authors: Ambient Group at SOFT
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+ 
+/* 
+ * Tests about object serialization in AT (see bugfix #53). 
+ * @author egonzale
+ */
+def Isolate := /.at.lang.types.Isolate;
+def Exception := /.at.lang.types.Exception;
+
+object: {
+
+	def someObject := object: {
+	  def v;
+	  def init(val) { v := val};
+	  def get() {v};
+	};
+	
+	def SerializationTest := extend: /.at.unit.test.UnitTest.new("serializationTest") with: {
+		 import /.at.lang.futures;
+		enableFutures(false);
+		
+		// helper function to create a regular object/isolate
+		def makeObjectC(tags := []) {
+			 object: {
+			     def val;
+			     def init(v) { val := v};
+				 def foo() {val};
+			 } taggedAs: tags;
+		};
+		def makeObject := &makeObjectC;
+		
+		 // helper function to create a mirage object/isolate.
+		def makeMirageC(closure := (script: { | mirror | (mirror.super)^pass()}), tags := []) {
+			object: {
+				 def foo() {42};
+			 } taggedAs: tags mirroredBy: ( 
+			 object: { |closure|
+				def pass() {
+					closure(self);
+				 };
+				 def print() {
+					 ((super^print()) + " mirrored by " + self);
+				 };
+			}childOf: defaultMirror extends: true taggedAs: tags mirroredBy: defaultMirror
+			); 
+		};
+		def makeMirage := &makeMirageC;
+		
+		def actor := actor: { 
+			 def receive(val) {
+				 `ok;
+			 };
+		};
+
+		// basic test in which we serialize an object in place of the original objA. 
+		 // this is the only test that should pass with a version before the bugfix.
+		def testAsyncPassReturnsObject() {
+			 def [fut, res] := makeFuture();
+			 // make a mirage called objA whose pass() returns an object
+			 def passA := script: { | mirror | makeObject()} carrying: [`makeObject];
+			 def objA := makeMirage(passA);
+			 res.resolve(actor<-receive(objA)@Due(2.seconds));
+			 fut;
+		}; //end-testAsyncPassReturnsObject()
+
+		// test in which we serialize a mirage in place of the original objA.
+		 // the mirage is serialized with pass-by-reference semantics.
+		def testAsyncPassReturnsMirageObject() {
+			 def [fut, res] := makeFuture();
+			 // make a mirage called objA whose pass() returns a mirage.
+			 // this mirrages just executes default semantics, i.e. the base level object is passed by reference.
+			 def passA := script: { | mirror | makeMirage(); } carrying: [`makeMirage]; 
+			 def objA := makeMirage(passA);
+			 res.resolve(actor<-receive(objA)@Due(2.seconds));
+			 fut;
+		}; //end-testAsyncPassReturnsMirageObject()
+
+		 
+		// test in which we serialize a mirage in place of the original objA.
+		 // that mirage is serialized with pass-by-value semantics.
+		def testAsyncPassReturnsMirageIsolate() {
+			 def [fut, res] := makeFuture();
+			 // make a mirage called objA whose pass() returns a mirage.
+			 // this mirrages just executes default semantics, i.e. the base level object is passed by reference.
+			 def passA := script: { | mirror | 
+				 def passB := (script: { | mirror | (mirror.super)^pass()});
+				 makeMirage(passB, [Isolate]); 
+			 } carrying: [`makeMirage, `Isolate]; 
+			 def objA := makeMirage(passA);
+			 res.resolve(actor<-receive(objA)@Due(2.seconds));
+			 fut;
+		}; //end-testAsyncPassReturnsMirageIsolate()
+
+		// test in which we serialize a mirage in place of the original objA.
+		 // that mirage places another mirage in its place.
+		def testAsyncPassReturnsMirageWhichReturnsIsolate() {
+			 def [fut, res] := makeFuture();
+			 // make a mirage called objA whose pass() returns a mirage, whose pass() just executes default semantics.
+			 def passA := script: { | mirror | 
+				 def passB := script: { | mirror | makeObject([Isolate])} carrying: [`makeObject, `Isolate];
+				 makeMirage(passB, []); 
+			 } carrying: [`makeMirage, `makeObject, `Isolate]; 
+			 def objA := makeMirage(passA);
+			 res.resolve(actor<-receive(objA)@Due(2.seconds));
+			 fut;
+		}; //end-testAsyncPassReturnsMirageWhichReturnsIsolate()
+	    
+	    // testing that serialization rules still hold if the pass() gets called on a field being passed.
+		def testAsyncPassReturnsMirage() {
+			 def [fut, res] := makeFuture();
+			 def passC := script: { | mirror|
+			    makeObject();
+			 } carrying: [`makeObject];
+			 def objC :=  makeMirage(passC);
+			 def passA := script: { | mirror|
+			   makeObject().new(objC);
+			 } carrying: [`makeObject, `objC];
+			 def objA := makeMirage(passA);
+			 res.resolve(actor<-receive(objA)@Due(2.seconds));
+			 fut;
+		}; // end-testAsyncPassReturnsMirage()
+
+		// unit test about functionality of isolate:passAs: construct.
+		def testAsyncIsolatePassAsConstruct() {
+			 def [fut, res] := makeFuture();
+			 def test := self;
+			 // make a mirage called objA whose pass() returns an object
+			 def passA := script: { | mirror | 
+			     def [foo,bar] := [42, 42];
+				 isolate: {} passAs: { |foo, bar, test|
+				     test<-assertEquals(foo, bar);
+ 				    /.test.serialization.someObject.new(foo);
+ 				 };
+			 } carrying: [`test];
+			 def objA := makeMirage(passA);
+			 res.resolve(actor<-receive(objA)@Due(2.seconds));
+			 fut;
+		}; //end-testAsyncIsolatePassAsConstruct()
+
+	};
+};
+

@@ -1,0 +1,19 @@
+/* Initialization code to bootstrap the local manager of the actor starting the debugging session 
+ * created when a user runs ambientTalk code in debug mode using the Eclipse IDEAT plugin. 
+ * Used instead of init.at when -Xdebug option specified.
+ * More information about AmbientTalk's debugger called REME-D at AmbientTalk google code site.
+*/
+
+// the following lines of code import the original init.at file
+// this should be as simple as:
+//   import /.at.init.init;
+// but, since namespaces are objects, they have an 'init' method
+// that shadows the 'init' namespace. To load the 'init' namespace
+// or file, we explicitly trigger the namespace its "loading" behavior
+// by triggering its doesNotUnderstand method.
+(reflect: /.at).doesNotUnderstand(`init);
+import (reflect: /.at.init).doesNotUnderstand(`init)();
+	
+/.at.support.debugger.localManager.enableLocalManager(true);
+
+self;

@@ -1,0 +1,142 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Software Languages Lab, 2006 - 2012
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+**/
+
+def StartActorEvent := jlobby.edu.vub.at.debug.events.StartActorEvent;
+def DisconnectActorEvent := jlobby.edu.vub.at.debug.events.DisconnectActorEvent;
+def PauseActorEvent := jlobby.edu.vub.at.debug.events.PauseActorEvent;
+def ResumeActorEvent := jlobby.edu.vub.at.debug.events.ResumeActorEvent;
+def StepIntoActorEvent := jlobby.edu.vub.at.debug.events.StepIntoActorEvent;
+def MessageSendFromActorEvent := jlobby.edu.vub.at.debug.events.MessageSendFromActorEvent;
+def MessageAddedToActorEvent := jlobby.edu.vub.at.debug.events.MessageAddedToActorEvent;
+def MessageRemovedFromActorEvent := jlobby.edu.vub.at.debug.events.MessageRemovedFromActorEvent;
+def FieldUpdateEvent := jlobby.edu.vub.at.debug.events.FieldUpdateEvent;
+
+def eclipseController := object: {
+	
+	// create a debugger manager for the debugging session 
+	def debuggerSessionBhv := /.at.support.debugger.debuggerManager.makeDebuggerManager();
+
+	//--------------------------------------------------------------
+	//interface with debugger manager
+	//--------------------------------------------------------------
+	def debuggerEventListener := object:{
+		
+		def startActorEvent(actorId, vmId, fileName, line){
+			sendEvent(StartActorEvent.new(actorId, vmId, fileName, line));
+		};	
+		def disconnectActorEvent(actorId){
+			sendEvent(DisconnectActorEvent.new(actorId));
+		};
+		def pauseActorEvent(actorId, actorState){
+			sendEvent(PauseActorEvent.new(actorId,actorState));
+		};
+		def resumeActorEvent(actorId){
+			sendEvent(ResumeActorEvent.new(actorId));
+		};
+		def messageAddedToActorEvent(actorId, msg){
+			sendEvent(MessageAddedToActorEvent.new(actorId, msg.selector, msg.arguments, msg));
+		};
+		def messageRemovedFromActorEvent(actorId, msg){ //TODO different than Patricio!
+			sendEvent( MessageRemovedFromActorEvent.new(actorId));
+		};
+		def messageSendFromActorEvent(actorId, msg){
+			sendEvent(MessageSendFromActorEvent.new(actorId, msg.selector, msg.arguments, msg));
+		};
+		
+		def fieldUpdateEvent(actorId, name, objectId, state){
+			sendEvent(FieldUpdateEvent.new(actorId, name, objectId, state));
+		};
+		def sendEvent(event){
+			debugCoreInstance.handleEvent(event);
+		};
+	};
+	
+	///--------------------------------------------------------------
+	//interface with eclipsePlugin
+	//-------------------------------------------------------------- 
+	 def commandBehaviour := object: {
+		 // StartCommand:
+		def executeStartCommand(startCommand){
+			startCommand.getBreakpoints().each: {|bP| 
+				bP.executeCommand(self);
+			};
+			debuggerSessionBhv.loadMainCode(startCommand.getActorId());
+		};
+		
+		// SetBreakPointCommand:
+		def executeSetBreakpointCommand(fileName, lineNumber, bpActiveOnList){
+			if: ( nil == bpActiveOnList) then: {			
+				debuggerSessionBhv.setBreakpoint(fileName, lineNumber);
+			} else: {
+				debuggerSessionBhv.breakpointActiveOn(fileName, lineNumber, bpActiveOnList );
+			};
+		};
+		// ClearBreakPointCommand:
+		def executeClearBreakpointCommand(fileName, lineNumber){
+			debuggerSessionBhv.clearBreakpoint(fileName, lineNumber);
+		};
+		// ResumeCommand:
+		def executeResumeCommand(actorId){
+			debuggerSessionBhv.resumeActor(actorId);
+		};
+		// StepIntoCommand:
+		def executeStepIntoCommand(actorId){
+			debuggerSessionBhv.stepInto(actorId);
+		};
+		// StepOverCommand:
+		def executeStepOverCommand(actorId){
+			debuggerSessionBhv.stepOver(actorId);
+		};
+		// StepReturnCommand:
+		def executeStepReturnCommand(actorId){
+			debuggerSessionBhv.stepReturn(actorId);
+		};
+		// SuspendCommand:
+		def executeSuspendCommand(actorId){
+			debuggerSessionBhv.pauseActor(actorId);
+		};
+		//TODO
+		def executeFieldUpdateCommand(actorId, name, reference){
+			system.println("executeFieldUpdateCommand not supported on this REME-D version");
+			//debuggerSessionBhv.fieldUpdate(actorId, name, reference);
+		};
+		def executeRefreshActorCommand(actorId){
+			system.println("executeFieldUpdateCommand not supported on this REME-D version");
+			//debuggerSessionBhv.refreshActor(actorId);
+		};
+	 
+	 };
+	 
+	// Set interface for eclipse
+	def debugCoreInstance := jlobby.edu.vub.at.debug.core.DebugCorePlugin.getDefault();
+	debugCoreInstance.registerController(commandBehaviour);
+	
+	// Export the session to the network and pass the debuggerEventListener
+	debuggerSessionBhv.setupDebugSession(debuggerEventListener);
+	 
+};
+
+self;

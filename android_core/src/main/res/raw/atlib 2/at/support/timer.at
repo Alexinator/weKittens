@@ -1,0 +1,217 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/* The TimerModule makes use of java.util.Timer to be able to schedule
+ * code for execution at a later point in time. Code can be scheduled
+ * for execution either once or at regular intervals. Scheduled pieces
+ * of code can be cancelled prematurely.
+ *
+ * @author tvcutsem
+ */
+
+// support class that allows you to create a TimerTask by means of a Runnable
+// this is necessary because AT objects can only be passed as interface types.
+def RunnableTimerTask := jlobby.at.support.RunnableTimerTask;
+def Timer := jlobby.java.util.Timer;
+def TimerTask := jlobby.java.util.TimerTask;
+def long := jlobby.java.lang.Long.TYPE;
+
+def theTimer := Timer.new();
+def scheduleMethod := theTimer.&schedule.cast(TimerTask, long);
+def scheduleAtFixedRateMethod := theTimer.&schedule.cast(TimerTask, long, long);
+def currentTimeMillis := jlobby.java.lang.System.&currentTimeMillis;
+def makeLong := /.at.support.symbiosis.&long;
+
+def TimerModule := object: {
+	def ZERO := makeLong(0);  
+	// convert AmbientTalk number to a Java long representing # millisec
+	def millisec(ms) { makeLong(ms) };
+	def seconds(s) { millisec(s*1000) };
+	def minutes(m) { seconds(m*60) };
+	
+	def now() { currentTimeMillis() };
+	
+	// time: { code } => return number of milliseconds
+	// it took to execute the given code
+	def time: code {
+		def start := now();
+		code();
+		now() - start
+	};
+	
+	// when the timeout has elapsed, invoke the given code block
+	// returns a subscription object that can be used to cancel execution of the block
+	def when: timeout elapsed: code {
+		def canceled := false; // see note at whenever:elapsed: below
+		if: (timeout < ZERO) then: {
+			// fire immediately
+			code<-apply([]);
+			object: { 
+				def cancel() { false };
+				def getTimeElapsed() {timeout};
+				def getTimeRemaining() {ZERO}; 
+			};
+		} else: {
+			def ttask := RunnableTimerTask.new(object: {
+				def run() { canceled.ifFalse: code };
+			});
+			scheduleMethod(ttask, timeout);
+			object: {
+				def cancel() {
+					canceled.ifFalse: {
+						canceled := true;
+						ttask.cancel();
+						ttask := nil; true;
+					}
+				};
+				def getTimeElapsed(){ 
+					if: canceled then: { timeout } 
+					else: {
+						def timeLeft := ttask.scheduledExecutionTime() - now();
+						// if the task was already runned, timeLeft will be negative
+						if: (timeLeft < ZERO) then: { timeLeft := ZERO};
+						timeout - timeLeft;
+					}
+				};
+				def getTimeRemaining() {
+					if: canceled then: { ZERO } 
+					else: {
+						def timeLeft := ttask.scheduledExecutionTime() - now();
+						// if the task was already runned, timeLeft will be negative
+						if: (timeLeft < ZERO) then: { timeLeft := ZERO};
+						timeLeft;
+					};
+				};
+			}	
+		}
+	};
+	
+	// each timeout milliseconds, invoke the given code block
+	// returns a subscription object that can be used to cancel execution of the block
+	def whenever: timeout elapsed: code {
+		// additional boolean flag to check if we can actually execute the code
+		// reason: when canceling a scheduled task, due to timing, the task may
+		// have already been fired (and hence the call to <-run() is already
+		// scheduled in the mailbox of this actor). To prevent the task from running
+		// anyway, we perform an additional check on the boolean. This *guarantees*
+		// that after invoking pub.cancel(), the scheduled code is no longer ran
+		def canceled := false;
+		if: (timeout < ZERO) then: {
+			// fire immediately
+			code<-apply([]);
+			object: { def cancel() { false } };
+		} else: {
+			def ttask := RunnableTimerTask.new(object: {
+				def run() { canceled.ifFalse: code };
+			});
+			scheduleAtFixedRateMethod(ttask, timeout, timeout);
+			object: {
+				def cancel() {
+					canceled.ifFalse: {
+						canceled := true;
+						ttask.cancel();
+						ttask := nil; true;
+					}
+				}
+			}	
+		}
+	};
+	
+	// a variant of when:elapsed: which returns a future that will be
+	// resolved or ruined by executing the given closure after the given timeout
+	def when: timeout elapsedWithFuture: closure {
+		def [fut,res] := /.at.lang.futures.makeFuture();
+		when: timeout elapsed: {
+			try: {
+				res.resolve(closure());
+			} catch: /.at.lang.types.Exception using: { |e| res.ruin(e) };
+		};
+		fut
+	};
+	
+	def has: period passedSince: timestamp {
+	  now() - timestamp > period
+	};
+	
+	def every: period until: condClosure do: body {
+		def pub := whenever: period elapsed: {
+			if: condClosure() then: {
+				pub.cancel();
+			} else: body;
+		};
+	};
+	
+	def every: period while: condClosure do: body {
+		every: period until: { !condClosure() } do: body;
+	};
+	
+	def TimerTest() {
+	 extend: /.at.unit.test.UnitTest.new("TimerTest") with: {
+      def FuturesModule := /.at.lang.futures; FuturesModule.enableFutures(false);
+		
+	  def testAsyncWhenElapsed() {
+		def [fut,res] := FuturesModule.makeFuture();
+		def subscription := when: millisec(200) elapsed: {
+		  res.resolve(true);
+	  };
+		FuturesModule.when: fut becomes: { |val|
+			if: val then:{
+			  self.assertEquals(millisec(200).intValue(), subscription.getTimeElapsed().intValue());
+				self.assertEquals(ZERO, subscription.getTimeRemaining());
+			};
+		};
+		fut;
+	  };
+		def testAsyncWhenEverElapsed() {
+			def run := 0;
+			def [fut,res] := FuturesModule.makeFuture();
+			def sub := whenever: millisec(200) elapsed: {
+				run := run + 1;
+				if: (run == 3) then: {
+					sub.cancel();
+					res.resolve(true);
+				};
+			};
+			fut;
+		};
+		def testAsyncEveryUntil() {
+			FuturesModule.future: { |reply|
+				def stop := false;
+				def run := 0;
+				every: millisec(200) until: { stop } do: {
+					run := run + 1;
+					if: (run == 2) then: {
+						stop := true;
+						reply(true);
+					};
+				};
+			};
+		};
+	};
+ };
+	
+};

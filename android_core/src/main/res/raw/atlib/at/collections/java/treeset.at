@@ -1,0 +1,135 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2011
+ * Author: Kevin Pinte
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+
+/**
+ * AmbientTalk wrapper for java.util.TreeSet
+ * supports interface of java.util.TreeSet
+ * supports interface of AmbientTalk table
+ *   except for operations which require indexing (e.g. at() or find:)
+ * supports (de)serialization using asCode: and fromCode:
+ *
+ */
+
+import ~.traits.collection;
+import ~.traits.table;
+
+def JTreeSet := jlobby.java.util.TreeSet;
+
+def TreeSetModule := object: {
+
+	deftype TreeSetT;
+
+	def TreeSetMirror := mirrorIsolate: {
+		
+		def print() {
+			"<treeset:" + (print: self.base.toTable()) + ">";
+		};
+		
+		def asCode() {
+			def elements := asCode: (self.base.toTable());
+			"{ def elements := " + elements + " ; TreeSet.new(elements) }()";
+		};
+		
+	};
+	
+	deftype ComparatorT;
+	
+	def comparator: clo {
+		isolate: {
+			def compare(a,b) {
+				clo(a,b);
+			};
+			def equals(other) { self == other };
+		} taggedAs: [ComparatorT];
+	};
+	
+	def DefaultComparator := comparator: { |a,b|
+		a <=> b;
+	};
+	
+	def sequenceComparators(compA, compB) {
+		comparator: { |a,b|
+			def comparison := compA(a,b);
+			if: (comparison == 0) then: {
+				compB(a,b);
+			} else: {
+				comparison;
+			};
+		};
+	};
+	
+	def TreeSet := isolate: {
+			
+		// wrapped java vector
+		def jtreeset := JTreeSet.new();
+		
+		// initialization
+		def init(comparator := DefaultComparator, collection := []) { 
+			// a collection that supports .each: {|e| ... }
+			def constructor := JTreeSet.&new;
+			self.jtreeset := constructor.cast(jlobby.java.util.Comparator)(comparator);
+			collection.each: { |e| self.add(e) };
+			self;
+		};
+		
+		def getCollection() {
+			self.jtreeset;
+		};
+		
+		import CollectionTrait;
+		import TableTrait;
+		
+		def comparator() {
+			self.getCollection().comparator();
+		};
+		
+		def first() {
+			self.getCollection().first();
+		};
+		
+		def last() {
+			self.getCollection().last();
+		};
+		
+		def headSet(toElement) {
+			self.getCollection().headSet(toElement);
+		};
+		
+		def subSet(fromElement, toElement) {
+			self.getCollection().subSet(fromElement, toElement);
+		};
+		
+		def tailSet(fromElement) {
+			self.getCollection().tailSet(fromElement);
+		};
+		
+	} taggedAs: [TreeSetT, CollectionT, TableT] mirroredBy: TreeSetMirror;
+	
+};
+
+TreeSetModule;

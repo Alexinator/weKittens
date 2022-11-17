@@ -1,0 +1,37 @@
+import /.at.support.timer;
+def Vector := /.at.collections.vector.Vector;
+
+def fac(n) {
+	if: (n == 0) then: { 1 } else: { n*fac(n-1) }
+};
+
+def fib(n) {
+	if: (n < 2) then: { n } else: { fib(n-1)+fib(n-2) }
+};
+
+def sort(n) {
+	def array[n] { 0??n }; // generate array of n random numbers between 0 and n
+	Vector.newFromTable(array).sort.asTable;
+};
+
+
+
+def report(name, n, code) {
+	system.print(name+" (average of "+n+" runs): ");
+	system.println(average(n, code));
+};
+
+def average(n, code) {
+	def times[n] { time: code };
+	def sum := times.inject: millisec(0) into: { |sum,next| sum + next };
+	sum / millisec(n);
+};
+
+system.println("warming up");
+average(5, fac(100));
+average(5, fib(10));
+average(5, sort(100));
+system.println("executing benchmark");
+report("fac(120)", 10, { fac(120) });
+report("fib(12)", 10, { fib(12) });
+report("sort(500)", 10, { sort(500) });

@@ -1,0 +1,566 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/**
+ * Implementation of adaptors for far references supporting different
+ * kinds of message passing semantics. These references wrap any other
+ * kind of far reference and only require the reference to point to a
+ * matching 'receptor' object.
+ *
+ * The following adaptors are defined:
+ * === Exactly-once Adaptor ===
+ * Example:
+ *   def unihandle := exactlyonceReceptorFor: obj;
+ *   def ref := exactlyonceAdaptor: unihandle;
+ *   ref<-msg() // msg will be buffered while unihandle disconnected
+ *
+ * In short:
+ *  - messages are delivered from sender to receiver one by one
+ *  - message sending is retried until message reception is acknowledged
+ *  - the remote receptor filters out any duplicate messages to avoid
+ *    delivering retried messages to its subject
+ *
+ * In addition, methods/messages whose name starts with 'idempotent' are
+ * treated by this adaptor as 'idempotent operations'. An idempotent
+ * operation is an operation that can be performed multiple times without
+ * changing the state of the system. This means that for idempotent
+ * messages/operations, filtering out duplicates is not necessary.
+ *
+ * === Batched message Adaptor ===
+ * This adaptor batches outgoing messages until a certain timeout period
+ * has elapsed. When the timeout fires, it batches all messages received
+ * within the timeout period and delivers them in a single message to a
+ * dedicated receptor object. The receptor unpacks the batched message and
+ * forwards each individual message to its principal.
+ *
+ * === Rebindable Adaptor ===
+ * A rebindable adaptor automatically searches for unireference objects
+ * published as a given type. Whenever the service discovery mechanism
+ * detects that the object is no longer available, the rebindable adaptor
+ * becomes unbound and tries to connect to a new object. These state
+ * changes can be detected by means of observers. A rebindable adaptor
+ * does not provide any message delivery guarantees, so messages sent
+ * via the adaptor may potentially get lost.
+ *
+ * @author tvcutsem
+ */
+
+import /.at.support.timer;
+import /.bridges.m2mi.api;
+import /.at.lang.firstclassrefs;
+import /.at.discovery.discovery;
+
+// time to wait between retries for sending or acknowledging messages
+def SND_INTERVAL := seconds(2);
+def ACK_INTERVAL := seconds(2);
+
+deftype Receptor;
+deftype ExactlyOnceReceptor <: Receptor;
+
+/**
+ * A receptor wraps an object such that all incoming messages
+ * are properly filtered for duplicates (i.e. idempotent).
+ * Moreover, the receptor acknowledges receipt of a message
+ * until the sender explicitly tells it to forget about the message.
+ */
+def makeExactlyOnceReceptor(forObject) {
+	// maps sender refs to last known message Id of that sender
+	def lastIdReceivedFrom := jlobby.java.util.HashMap.new();
+	
+	object: {
+		def incoming(fromSender, message, id) {
+			// if the message triggers an idempotent operation, no additional
+			// bookkeeping is necessary to prevent duplicates
+			// messages are regarded as 'idempotent' via the naming convention that
+			// their names start with the noun 'idempotent'.
+			if: (message.selector.text ~= "^idempotent.*") then: {
+				// just forward the message
+				forObject <+ message;
+				// and acknowledge receipt (if receipt does not get through, the sender will resend the message)
+				fromSender<-acknowledge(self, id);
+			} else: {
+				// check for duplicates
+				def lastId := lastIdReceivedFrom.get(fromSender);
+				if: !(lastId == id) then: {
+					// store id such that the message is not delivered twice
+					lastIdReceivedFrom.put(fromSender, id);
+					// deliver the message to the actual object
+					forObject <+ message;
+					// acknowledge receipt of the message
+					fromSender<-acknowledge(self, id);
+					// persist in sending an acknowledgement to the sender
+					// until we are sure the acknowledgement has been sent
+					every: ACK_INTERVAL until: {
+						!(lastIdReceivedFrom.get(fromSender) == id)
+					} do: {
+						fromSender<-acknowledge(self, id)
+					};
+				}
+			};
+		};
+		def forget(sender, id) {
+			if: (lastIdReceivedFrom.get(sender) == id) then: {
+				lastIdReceivedFrom.remove(sender);
+			};
+		};
+	} taggedAs: [ExactlyOnceReceptor];
+};
+
+// TODO: check whether mirror-extension works on M2MI-refs
+def makeExactlyOnceAdaptor(receptor) {
+	object: { } mirroredBy: (mirror: {
+	  import TEventualRef;
+	  delegate := receptor;
+	
+	  // unique identifier for each outgoing message sent by me
+	  def uniqueId := 0;
+	
+	  // pending outgoing messages without an acknowledgement
+	  def outbox := [];
+		
+		// if not nil, we're waiting for an acknowledgement
+		def currentMessageId := nil;
+		
+	  // === implement TEventualRef's required interface ===
+	
+		/**
+		 * This far ref implements exactly-once message delivery,
+		 * assuming a reliable network, a connection at some point in time,
+		 * and assuming messages are sent sequentially from sender to receiver
+		 */
+	  def intercept(msg) {
+		  // store the message in the outbox
+		  outbox := outbox + [msg];
+		  // if it's the only message in the outbox, try to send it
+		  if: (outbox.length == 1) then: {
+			  sendNext(msg);
+		  };
+		  nil
+	  };
+	
+	  /** sent by receptor upon successful message delivery */
+	  def acknowledge(rcv, id) {
+		  // always reply to an ack message by telling the receptor
+		  // to forget about bookkeeping data for this message
+		  rcv<-forget(self, id);
+		  // only clear message ID if it matches (could be a stale ack message
+			// referring to previous ids)
+		  if: (currentMessageId == id) then: {
+			  currentMessageId := nil;
+			  // remove message from outbox
+			  outbox := outbox.select(2,outbox.length+1);
+			  // if more messages pending, send the next one
+			  if: (outbox.length > 0) then: {
+				  sendNext(outbox[1]);
+			  }
+		  }
+	  };
+	
+	  /**
+	   * To send the message, send a composite 'incoming' message
+	   * to the receptor encapsulating a unique message ID. The ID
+	   * is used to check in the acknowledge method whether message
+	   * transmission was succesful. Persist in sending the message
+	   * until an acknowledgement was received. 
+	   */
+	  def sendNext(msg) {
+		  def thisMessageId := uniqueId;
+		  currentMessageId := thisMessageId;
+		  uniqueId := uniqueId + 1;
+		  receptor<-incoming(self, msg, currentMessageId);
+		  every: SND_INTERVAL until: { !(thisMessageId == currentMessageId) } do: {
+			  receptor<-incoming(self, msg, currentMessageId)
+		  };
+	  };
+	
+	  def toString() {
+		  "exactly-once adaptor for: " + receptor;
+	  };
+	
+	  def transportStrategy := { |receptor|
+		  /.at.lang.ref_adaptors.exactlyonceAdaptor: receptor;
+	  };
+  });
+};
+
+// time to wait before sending a message
+// (= max amount of time to accumulate and batch messages)
+def BATCH_INTERVAL := seconds(2);
+
+/* Note on choosing an adaptive batch interval timeout period:
+ *
+ * Programmer could specify a desired output rate (= the ratio #sent messages per millisec)
+ * Then, the adaptor could calculate the effective output rate
+ * (= the ratio #received messages per millisec for the duration of the timeout period)
+ * If the effective output rate is > the desired output rate, this means more messages
+ * are transmitted than is desirable and we can increase the timeout period to lower
+ * the effective output rate (batch more messages). Otherwise, there are less messages
+ * transmitted than desirable. To increase this number, shorten the timeout period
+ * such that less messages are buffered.
+ */
+
+/**
+ * This far ref implements batched message delivery. When it receives
+ * a message, rather than sending it immediately, it batches all
+ * outgoing messages received within a timeout period, then bundles
+ * all of those messages into one batched message.
+ */
+def makeBatchAdaptor(batchReceptor, batchInterval := BATCH_INTERVAL) {
+	object: { } mirroredBy: (mirror: {
+	  import TEventualRef;
+	  delegate := batchReceptor;
+	
+	  // currently batched outgoing messages
+	  def outbox := [];
+		
+		// if not nil, we've scheduled a flush timeout
+		def flushTask := nil;
+		
+	  // === implement TEventualRef's required interface ===
+	
+	  def intercept(msg) {
+		  // store the message in the outbox
+		  outbox := outbox + [msg];
+		  // if we have not already scheduled a flush task,
+		  // schedule one now to actually send the message
+		  // at a later point in time
+		  if: (nil == flushTask) then: {
+			  flushTask := when: batchInterval elapsed: {
+				  // re-set the flag to nil to indicate that the flush
+				  // task is no longer scheduled
+				  flushTask := nil;
+				  // send the entire contents of the outbox to the recipient
+				  batchReceptor<-batchReceive(outbox);
+				  // flush the outbox
+				  outbox := [];
+			  };
+		  };
+		  nil
+	  };
+	
+	  def toString() {
+		  "batch adaptor for: " + receptor;
+	  };
+	
+	  def transportStrategy := { |receptor|
+		  /.at.lang.ref_adaptors.batchAdaptor: receptor;
+	  };
+  });
+};
+
+deftype BatchReceptor <: Receptor;
+
+def makeBatchReceptor(forObject) {
+	object: {
+		def batchReceive(tableOfMessages) {
+			tableOfMessages.each: { |msg|
+				forObject <+ msg;
+			};
+		};
+	} taggedAs: [BatchReceptor];
+};
+
+deftype RebindReceptor <: Receptor;
+
+/**
+ * A rebindable adaptor binds to any unireference exported as the given
+ * type. It forwards messages to whichever unireference it is currently
+ * bound to. Clients can register observers to be notified of disconnection
+ * and reconnection.
+ *
+ * A rebindable adaptor does not offer any message delivery guarantees.
+ * Moreover, a message sent to an unbound rebindable reference is simply
+ * dropped. One can use the exactly once adaptor in combination with this
+ * adaptor to provide the necessary QoS guarantees.
+ *
+ * TODO: need a way to stop the discovery initiated by this reference
+ * (i.e. when can this ref stop searching?)
+ */
+def makeRebindableAdaptorFor(Type) {
+	object: { } taggedAs: [ RebindReceptor ] mirroredBy: (mirror: {
+
+    import TEventualRef;
+    import TObservable exclude init;
+
+    def principal := nil;
+    def joinedbox := [];
+
+    def alreadyBound() { nil != principal };
+
+    def init(base) {
+	    super^init(base);
+	    // create two types of observers: those for reconnection
+	    // and those for disconnection
+	    TObservable^init(`connection, `disconnection);
+	
+	    // when the correct mirror is instantiated, start the service discovery
+			whenever: Type discovered: { |uniref|
+				// store ref for later binding purposes
+				joinedbox := joinedbox + [uniref];
+				if: (!alreadyBound) then: {
+					foundPrincipal(uniref);
+				}
+			};
+
+			whenever: Type lost: { |uniref|
+				// remove this uniref from the joinedbox, if any
+				joinedbox := joinedbox.filter: { |ref| !(ref == uniref) };
+				if: (principal == uniref) then: {
+					lostPrincipal();
+					// rebind to spare principal, if any
+					if: (joinedbox.length > 0) then: {
+						foundPrincipal(joinedbox[1]);
+					};
+				};
+			};
+    };
+
+    // add when: adaptor disconnected: { |from| ... } observer
+    def addConnectionObserver(obs) {
+	    self.addObserver: obs to: self.observerCatalog.connection;
+    };
+
+    // add when: adaptor reconnected: { |to| ... } observer
+    def addDisconnectionObserver(obs) {
+	    self.addObserver: obs to: self.observerCatalog.disconnection;
+    };
+
+    def foundPrincipal(p) {
+			// found a matching principal, bind to it
+			principal := p;
+			// notify when:reconnected: observers
+			self.notify: self.observerCatalog.connection withArgs: [principal];
+    };
+
+    def lostPrincipal() {
+			// notify when:disconnected: observers
+			self.notify: self.observerCatalog.disconnection withArgs: [principal];
+			// retract all unsent messages back to the inbox
+		  //def out := (retract: principal); // TODO: how to write retract using unirefs?
+		  // add untransmitted messages to the front of the inbox
+		  //inbox := out + inbox;
+			// clear the binding
+			principal := nil;
+    };
+
+		// == provide required methods for TEventualRef trait ==
+		
+		// received base-level messages are either forwarded to the
+		// current principal or stored in an outbox while disconnected
+		def intercept(msg) {
+			// if the rebindable ref is currently disconnected, drop the message
+		  if: (alreadyBound) then: {
+			  principal <+ msg;
+		  };
+		  nil
+		};
+	
+		def toString() {
+		  "rebindable adaptor for "+Type+": "+self;
+		};
+	
+		def transportStrategy := { |Type|
+			// when arriving at the remote host, create a new local rebindable reference
+			/.at.lang.ref_adaptors.makeRebindableAdaptorFor(Type)
+		};
+
+	})
+};
+
+def AdaptorModule := object: {
+
+  def exactlyonceAdaptor: refToReceptor {
+	  makeExactlyOnceAdaptor(refToReceptor);
+  };
+
+  def exactlyonceReceptorFor: obj {
+	  unireference: Receptor for: makeExactlyOnceReceptor(obj);
+  };
+
+  def batchAdaptor: refToReceptor {
+	  makeBatchAdaptor(refToReceptor);
+  };
+
+  def batchReceptorFor: obj {
+	  unireference: Receptor for: makeBatchReceptor(obj);
+  };
+
+  def rebindableAdaptorFor: Type {
+	  makeRebindableAdaptorFor(Type);
+	};
+	
+	// language constructs for the rebindable adaptor
+	
+	def when: rebindableRef disconnected: code {
+		rebindableRef<-addDisconnectionObserver(code)@MetaMessage;
+	};
+	
+	def when: rebindableRef reconnected: code {
+		rebindableRef<-addConnectionObserver(code)@MetaMessage;
+	};
+
+  def AdaptorModuleTest() {
+	  extend: /.at.unit.test.UnitTest.new("AdaptorModuleTest") with: {
+		  import /.at.lang.futures;
+
+		  def testAsyncSimpleMessageSend() {
+			  future: { |reply|
+				  def subject := object: {
+				    def m() { reply(true) };
+			    };
+			    def ref := exactlyonceAdaptor: (exactlyonceReceptorFor: subject);
+			    ref<-m();
+			  }
+		  };
+		
+		  def testAsyncMultipleMessageSends() {
+			  future: { |reply|
+				  def subject := object: {
+					  def i := 0;
+				    def m() { i := i + 1; if: (i == 2) then: { reply(true) } };
+			    };
+			    def ref := exactlyonceAdaptor: (exactlyonceReceptorFor: subject);
+			    ref<-m();
+			    ref<-m();
+			  }
+		  };
+		
+		  def testAsyncDifferentMessageSends() {
+		    def [f1,r1] := makeFuture();
+		    def [f2,r2] := makeFuture();
+			  def subject := object: {
+				  def m() { r1.resolve(true) };
+				  def n() { r2.resolve(true) };
+			  };
+			  def ref := exactlyonceAdaptor: (exactlyonceReceptorFor: subject);
+			  ref<-m();
+			  ref<-n();
+			  group: [f1, f2]
+		  };
+		
+		  def testAsyncIdempotentSend() {
+			  future: { |reply|
+				  def subject := object: {
+					  // prefix is 'idempotent', so this operation can be ran multiple times
+				    def idempotentOperation() { reply(true) };
+			    };
+			    def ref := exactlyonceAdaptor: (exactlyonceReceptorFor: subject);
+			    ref<-idempotentOperation();
+			  };
+		  };
+
+		  def testAsyncBatchedMessageDelivery() {
+		    def [f1,r1] := makeFuture();
+		    def [f2,r2] := makeFuture();
+			  def subject := object: {
+				  def m() { r1.resolve(true) };
+				  def n() { r2.resolve(true) };
+			  };
+			  def batchRef := batchAdaptor: (batchReceptorFor: subject);
+			  // the following messages should be sent in batch
+			  batchRef<-m();
+			  batchRef<-n();
+			  group: [f1, f2]
+		  };
+		
+		  // see if the adaptor also works in conjunction with an m2mi handle
+		  def testAsyncBatchedDeliveryToRemoteObject() {
+		    def [f1,r1] := makeFuture();
+		    def [f2,r2] := makeFuture();
+			  def subject := object: {
+				  def m() { r1.resolve(true) };
+				  def n() { r2.resolve(true) };
+			  };
+			  
+			  deftype BatchedDeliveryToRemoteObjectTestT;
+			  def uniRefToReceptor := /.bridges.m2mi.api.unireference:
+			    BatchedDeliveryToRemoteObjectTestT for: (batchReceptorFor: subject);
+			
+			  def batchRef := batchAdaptor: uniRefToReceptor;
+			  // the following messages should be sent in batch
+			  batchRef<-m();
+			  batchRef<-n();
+			  group: [f1, f2]
+		  };
+		
+		  def testAsyncRebindableAdaptor() {		
+		    deftype RebindableAdaptorTestT;
+		
+		    def rebindAdaptor := rebindableAdaptorFor: RebindableAdaptorTestT;
+		
+		    def peer := actor: {
+			    deftype RebindableAdaptorTestT;
+			    /.at.discovery.discovery.export: (object: {
+				    def m() { 42 }
+			    }) as: RebindableAdaptorTestT;
+		    };
+		
+		    // wait until adaptor has connected before sending
+		    // the message
+		    future: { |reply|
+			  	when: rebindAdaptor reconnected: { |ref|
+				    enableFutures(false);
+				    reply(when: rebindAdaptor<-m()@FutureMessage becomes: { |val|
+					    self.assertEquals(42, val);
+					  });
+				  };
+			  };
+		  };
+
+		  // tests whether the ExactlyOnce adaptor can be combined
+		  // with the rebindable adaptor into a composite adaptor
+		  // providing both rebindable behaviour and strong message
+		  // delivery guarantees
+		  def testAsyncRebindablePlusExactlyOnceAdaptor() {		
+		    deftype RebindablePlusExactlyOnceAdaptorTestT;
+		    def rebindAdaptor := rebindableAdaptorFor: RebindablePlusExactlyOnceAdaptorTestT;
+		    def compositeAdaptor := exactlyonceAdaptor: rebindAdaptor;
+		
+		    def peer := actor: {
+			    deftype RebindablePlusExactlyOnceAdaptorTestT;
+			    /.at.discovery.discovery.export: (
+				    /.at.lang.ref_adaptors.exactlyonceReceptorFor: (object: {
+				      def test() { 42 }
+			      })) as: RebindablePlusExactlyOnceAdaptorTestT;
+		    };
+		
+		    // wait until adaptor has connected before sending
+		    // the message
+		    future: { |reply|
+			  	when: compositeAdaptor reconnected: { |ref|
+				    enableFutures(false);
+				    reply(when: compositeAdaptor<-test()@FutureMessage becomes: { |val|
+					    self.assertEquals(42, val);
+					  });
+				  };
+			  };
+		  };
+		
+	  };
+  }; // end AdaptorModuleTest
+}; // end AdaptorModule
+

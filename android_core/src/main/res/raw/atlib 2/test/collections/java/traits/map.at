@@ -1,0 +1,151 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2011
+ * Author: Kevin Pinte
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+
+/**
+ * Provides unittests for AT wrapper trait for java.util.Map
+ *
+ */
+
+import /.at.collections.java.hashmap;
+import ~.util;
+
+def MapTestModule := object: {
+
+
+	def MapTest := extend: /.at.unit.test.UnitTest.new("MapTest") with: {
+	
+		def [a, b, c, d, e] := [nil, nil, nil, nil, nil];
+		def t := [["a", 1],["b", 2],["c", 3],["d", 4],["e", 5]];
+		
+		def setUp() {
+			def vt[5] { HashMap.new() };
+			[a, b, c, d, e] := vt;
+		};
+		
+		def tearDown() {
+			[a, b, c, d, e].each: { |v| v.clear() };
+		};
+		
+		def testConstructor() {
+			a := HashMap.new(t);
+			self.assertEquals(a.size(), 5);
+			self.assertEquals(b.size(), 0);
+		};
+		
+		def testClear() {
+			a := HashMap.new(t);
+			self.assertEquals(a.size(), 5);
+			a.clear();
+			self.assertEquals(a.size(), 0);
+		};
+		
+		def testContainsKey() {
+			a := HashMap.new(t);
+			self.assertTrue(a.containsKey("d"));
+			self.assertFalse(a.containsKey("z"));
+		};
+		
+		def testContainsValue() {
+			a := HashMap.new(t);
+			self.assertTrue(a.containsValue(3));
+			self.assertFalse(a.containsValue(42));
+		};
+		
+		def testEntrySet() {
+			a := HashMap.new(t);
+			def es := a.entrySet();
+			self.assertEquals(es.size(), 5);
+			es.each: { |entry|
+				if: (entry.getValue() == 2) then: {
+					entry.setValue(42);
+				};
+				if: (entry.getKey() == "d") then: {
+					entry.setValue(43);
+				};
+			};
+			self.assertEquals(a.get("b"), 42);
+			self.assertEquals(a.get("d"), 43);
+		};
+		
+		def testGet() {
+			a := HashMap.new(t);
+			self.assertEquals(a.get("b"), 2);
+			self.assertEquals(a.get("z"), nil);
+		};
+		
+		def testIsEmpty() {
+			a := HashMap.new(t);
+			self.assertFalse(a.isEmpty());
+			a.clear();
+			self.assertTrue(a.isEmpty());
+		};
+		
+		def testKeySet() {
+			a := HashMap.new(t);
+			def es := a.keySet();
+			def kt := t.map: { |entry| entry[1] };
+			self.assertTrue(sameElements(kt, es.toTable()));
+			self.assertTrue(es.remove("b"));
+			self.assertEquals(a.size(), 4);
+			self.assertFalse(a.containsKey("b"));
+		};
+		
+		def testPut() {
+			a.put("x", "y");
+			self.assertEquals(a.get("x"), "y");
+		};
+		
+		def testPutAll() {
+			a := HashMap.new(t);
+			b.putAll(a);
+			self.assertEquals(b.size(), 5);
+		};
+		
+		def testRemove() {
+			a := HashMap.new(t);
+			self.assertEquals(a.remove("a"), 1);
+			self.assertFalse(a.containsKey("a"));
+		};
+		
+		def testSize() {
+			a := HashMap.new(t);
+			self.assertEquals(a.size(), 5);
+		};
+		
+		def testValues() {
+			a := HashMap.new(t);
+			def vs := a.values();
+			def vt := t.map: { |entry| entry[2] };
+			self.assertTrue(sameElements(vt, vs.toTable()));
+		};
+		
+	};
+	
+};
+
+MapTestModule;

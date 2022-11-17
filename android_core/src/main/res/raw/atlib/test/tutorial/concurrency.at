@@ -1,0 +1,238 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/**
+ * unit test for the actors tutorial chapter
+ * @author tvcutsem
+ */
+extend: /.at.unit.test.UnitTest.new("Concurrency") with: {
+
+  import /.at.lang.futures;
+  // don't activate futures by default, may break previous unit tests
+  enableFutures(false);
+  
+  def a := actor: {
+    def sayHello() {
+      system.println("Hello World")
+    };
+  };
+
+  def testAIsFarReference() {
+    self.assertTrue(is: a taggedAs: /.at.lang.types.FarReference)
+  };
+
+  def testSayHello() {
+    self.assertEquals(nil, a<-sayHello()@OneWayMessage);
+  };
+
+  def calculator := actor: {
+    def add(x,y,customer := nil) {
+      if: !(nil == customer) then: { customer<-result(x+y) }; // for the customer-case
+      x+y; // for the futures-case
+    };
+    def divide(x,y) {
+	    x/y;
+    };
+  };
+
+  def testCalcIsFarReference() {
+    self.assertTrue(is: calculator taggedAs: /.at.lang.types.FarReference);
+  };
+
+  def testAsyncAddSimpleNumbers() {
+    def [fut,res] := makeFuture();
+    def test := self;
+    calculator<-add(1,2,object: {
+      def result(sum) {
+        try: {
+          res.resolve(test.assertEquals(3, sum));
+        } catch: /.at.lang.types.Exception using: { |e|
+          res.ruin(e);
+        }
+      };
+    });
+    fut
+  };
+
+  def complexNumber := isolate: {
+    def re; // assume cartesian coordinates
+    def im;
+    def init(re,im) {
+      self.re := re;
+      self.im := im;
+    };
+    def +(other) {
+      self.new(re+other.re, im+other.im);
+    };
+  };
+  
+  def testComplexNumberIsIsolate() {
+    self.assertTrue(is: complexNumber taggedAs: /.at.lang.types.Isolate);
+  };
+  
+  def testComplexnumberAdd() {
+    def [fut,res] := makeFuture();
+    def test := self;
+    calculator<-add(
+      complexNumber.new(1,1),
+      complexNumber.new(2,2),
+      object: {
+        def result(sum) {
+          try: {
+            test.assertEquals(sum.re, 3);
+            test.assertEquals(sum.im, 3);
+            res.resolve(true);
+          } catch: /.at.lang.types.Exception using: { |e|
+            res.ruin(e);
+          }
+        };
+      });
+    fut;
+  };
+
+  def testIsolateHasNoLexScope() {
+    def x := 1;
+    def y := 2;
+    // we only include y, not x, so an error results
+    def adder := isolate: { |y|
+      def add(n) { x + n };
+    };
+    self.assert: /.at.lang.types.UndefinedSlot raisedIn: {
+      adder.add(3)
+    };
+  };
+
+  def testIsolateAutoLexScope() {
+    def x := 1;
+    // we do not specify lexical vars, so they are calculated automatically
+    def adder := isolate: {
+      def add(n) { x + n };
+    };
+    self.assertEquals(4, adder.add(3));
+  };
+  
+  def testIsolateScopeInheritance() {
+    def x := 1;
+    def adder := isolate: { |x|
+      def add(n) { x + n };
+    };
+    self.assertEquals(4, adder.add(3));
+  };
+
+  def testFuture() {
+	def sum := calculator<-add(1,2)@FutureMessage;
+	self.assertTrue(is: sum taggedAs: Future);
+  };
+
+  def testAsyncWhenBecomes() {
+    def sumFuture := calculator<-add(1,2)@FutureMessage;
+    def test := self;
+    def fut := when: sumFuture becomes: { |sum|
+      test.assertEquals(3, sum);
+    };
+    self.assertTrue(is: fut taggedAs: Future);
+    fut;
+  };
+
+	def testAsyncWhenBecomesCatchUsing() {
+		def divFuture := calculator<-divide(5,0)@FutureMessage;
+		def fut := when: divFuture becomes: { |div|
+		  self.assertFalse(true); // force exception, expected exception
+		} catch: /.at.lang.types.IllegalArgument using: { |exc|
+		  nil // ok, division by zero
+		};
+		self.assertTrue(is: fut taggedAs: Future);
+		fut;
+	};
+
+  def testAsyncOrdering() {
+    def [fut,res] := makeFuture();
+		def flag := true;
+		def sumFuture := calculator<-add(1,2)@FutureMessage;
+		when: sumFuture becomes: { |sum|
+		  res.resolve(self.assertFalse(flag));
+		  system.println("... and here later.");
+		};
+		system.print("Always here first");
+		flag := false;
+		fut;
+  };
+
+	def testWhenReturnsFuture() {
+		def fut := when: calculator<-add(1,2)@FutureMessage becomes: { |sum|
+		  calculator<-add(sum,3)
+		};
+		self.assertTrue(is: fut taggedAs: Future);
+	};
+	
+	def testAsyncExplicitFutures() {
+		def [future, resolver] := makeFuture();
+		def val := 1; // calculate useful value
+		resolver.resolve(val);
+		when: future becomes: { |val|
+			self.assertEquals("<resolved future:1>", (print: future));
+		};
+	};
+	
+	def testActorMirror() {
+		def actor := reflectOnActor();
+		def oldmirror := actor.becomeMirroredBy: (extend: actor with: {
+		  def createMessage(@args) {
+		    def msg := super^createMessage(@args);
+		    def msg.added := 0;
+		    msg
+		  };
+		});
+		def customMsg := <-foo();
+		self.assertTrue((reflect: customMsg).respondsTo(`added));
+		self.assertEquals(0, customMsg.added);
+		reflectOnActor().becomeMirroredBy: oldmirror;
+		customMsg := <-bar();
+		self.assertFalse((reflect: customMsg).respondsTo(`added));
+	};
+
+	def testAsyncNestedActorScope() {
+		def outer := actor: {
+		  def x := 1;
+		  def get() { x };
+		  def set(v) { x := v };
+
+		  def inner() {
+			  actor: { |x|
+		      def get() { x };
+		      def set(v) { x := v };
+		    };
+		  };
+		};
+		
+		def xval := (outer<-inner()@FutureMessage)<-get()@FutureMessage;
+		def fut := when: xval becomes: { |v|
+			self.assertEquals(1, v);
+		};
+		fut;
+	};
+};

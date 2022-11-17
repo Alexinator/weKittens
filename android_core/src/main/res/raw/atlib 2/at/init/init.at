@@ -1,0 +1,334 @@
+/* The following definitions represent top-level functions that are
+   implemented natively in the interpreter. They can be uncommented
+   to shadow their native equivalent.
+
+def / := lobby;
+
+def root := self;
+
+def if: booleanCondition then: consequent {
+  booleanCondition.ifTrue: consequent
+};
+
+def if: booleanCondition then: consequent else: alternative {
+  booleanCondition.ifTrue: consequent ifFalse: alternative
+};
+
+def while: cond do: body {
+  cond.whileTrue: body
+};
+
+def foreach: iterator in: table {
+  table.each: iterator
+};
+
+def do: body if: cond {
+  cond.ifTrue: body
+};
+
+def do: body unless: cond {
+  cond.ifFalse: body
+};
+
+def extend: obj with: code {
+  (reflect: obj).extend(code)
+};
+
+def share: obj with: code {
+  (reflect: obj).share(code)
+};
+
+def clone: obj {
+  (reflect: obj).clone()
+};
+
+def !(b) { b.not() };
+
+def -(n) { 0-n };
+
+def +(n) { 0+n };
+
+*/
+
+// returns the current working directory
+def pwd() {
+	def ns := (print: ~);
+	ns.explode.select(5,ns.length()).implode;
+};
+
+// contains the AT_HOME path
+def AT_HOME := jlobby.java.lang.System.getProperty("AT_HOME");
+
+def does: obj respondTo: selector {
+	(reflect: obj).respondsTo(selector)
+};
+
+// example: table: 5 fill: { |i| i } => [1,2,3,4,5]
+def table: size fill: closure {
+  def t[size] { nil };
+  1.to: size do: { |i| t[i] := closure(i) };
+  t
+};
+
+/*def functor: closure {
+  def obj := object: closure;
+  eval: `({ // TODO: this evaluates a closure definition within obj, which does nothing...
+    // base-level interface for closures
+    def apply(args) { self.run(@args) };
+    def whileTrue: body { self.run.whileTrue: body };
+    def getMethod() { (reflect: self.run).method };
+    def getContext() { (reflect: self.run).context };
+  }) in: obj;
+  obj;
+};*/
+/*
+TODO: currently a slight hack is applied in functor:, namely to return 'self'
+from the default run method. This is necessary because apparently, when a functor
+is bound to a 'super' field, the interpreter will dereference super as 'super()'
+(i.e. it will think super is bound to a nullary closure and thus invoke it)
+Therefore, the functor's run() method will be applied! The default run() method
+returns self such that super() really returns the value of super (the functor itself)
+*/
+def functor: closure {
+  deftype Closure;
+  def functorPrototype := object: {
+    // to be overridden by children
+    def run(@args) { self };
+    // base-level interface for closures
+    def apply(args) { self.run(@args) };
+    def whileTrue: body { self.run.whileTrue: body };
+    def getMethod() { (reflect: self.run).method };
+    def getContext() { (reflect: self.run).context };
+    def escape() { self.run.escape() };
+  } taggedAs: [ Closure ];
+  extend: functorPrototype with: closure;
+};
+
+// infinite asynchronous loop
+def loop: code {
+	code();
+	self<-loop: code;
+	nil;
+};
+
+// asynchronous if-test
+def whenTrue: boolFut then: cons else: alt {
+	boolFut<-ifTrue: cons ifFalse: alt;
+};
+
+// asynchronous while loop over future-type conditional
+// requires futures to be enabled by default!
+def asLongAs: cond do: body {
+	cond()<-ifTrue: {
+		body();
+		asLongAs: cond do: body;
+	};
+	nil;
+};
+
+def unless: test then: closure {
+	if: !test then: closure;
+};
+
+/**
+ * Defines a pass-by-copy lambda.
+ * Example:
+ * def x := 5;
+ * def l := isolatelambda: { |x| x + 2 }
+ *
+ * In this example, l is a function object which can
+ * be passed to remote actors and applied. All of the arguments
+ * specified in the isolate lambda are lexically visible variables
+ * which are copied inside the by-copy function object and which
+ * will hence be serialized together with the function object.
+ *
+ * Implementation-wise, defining an isolate lambda is equal to
+ * defining an isolate object with an apply method and tagged
+ * as a Closure.
+ */
+def isolatelambda: clo {
+  deftype Closure;
+  deftype Isolate;
+  def mth := clo.method;
+  eval: `(object: { |#@(mth.parameters)|
+    def apply(@args) {
+      #@(mth.bodyExpression.statements)
+    }
+  } taggedAs: [#Closure,#Isolate]) in: clo.context.lexicalScope;
+};
+
+def isolatelambda: clo scoped: lexclo {
+	isolatelambda: clo closeOver: (lexclo.method.parameters);
+  /*deftype Closure;
+  deftype Isolate;
+  def mth := clo.method;
+  eval: `(object: { |#@(lexclo.method.parameters)| 
+    def apply(args) {
+        self.run(@args);
+    };
+    def run(#@(mth.parameters)){        
+      #@(mth.bodyExpression.statements)
+    };
+  } taggedAs: [#Closure,#Isolate]) in: lexclo.context.lexicalScope;*/
+};
+
+def isolatelambda: clo closeOver: variableNames {
+  deftype Closure;
+  deftype Isolate;
+  def mth := clo.method;
+  eval: `(object: { |#@(variableNames)| 
+    def apply(args) {
+        self.run(@args);
+    };
+    def run(#@(mth.parameters)){        
+      #@(mth.bodyExpression.statements)
+    };
+  } taggedAs: [#Closure,#Isolate]) in: clo.context.lexicalScope;
+};
+
+// an alias for the above method
+def script: clo carrying: variableNames { isolatelambda: clo closeOver: variableNames };
+
+def script: clo {
+	script: clo carrying: [];
+};
+
+/**
+ * Defines an isolate object with a custom serialization strategy.
+ * Example:
+ *  def foo := 42;
+ *  def i := isolate: {
+ *    ...
+ *  } passAs: { |foo|
+ *    /.some.Object.new(foo);
+ *  }
+ * => defines an isolate object i which, when passed between actors,
+ *    becomes a some.Object on the other side. Note that state can be
+ *    transferred as usual via the parameter list of the closure.
+ */
+ // BUGFIX#54: mirror should be also an isolate.
+def mirrorIsolate: closure {
+  object: closure childOf: defaultMirror extends: true taggedAs: [/.at.lang.types.Isolate] mirroredBy: defaultMirror;
+};
+
+def isolate: closure passAs: clo {
+    def quotedVarList := (clo.method).parameters;	
+    def transportClosure := script: clo carrying: quotedVarList;
+	object: closure taggedAs: [/.at.lang.types.Isolate] mirroredBy: (mirrorIsolate: { | transportClosure, quotedVarList |
+		def pass() {
+			///.at.support.util.uponArrivalBecome: transportClosure
+  			def args := eval: quotedVarList in: transportClosure;
+			transportClosure.run(@args);
+		};
+	})
+};
+
+// closure with typetags
+def isolate: closure taggedAs: tagTable {
+	object: closure taggedAs: [/.at.lang.types.Isolate] + tagTable;
+};
+
+// closure with typetags and mirror
+def isolate: closure taggedAs: tagTable mirroredBy: m {
+	object: closure taggedAs: [/.at.lang.types.Isolate] + tagTable mirroredBy: m;
+};
+
+// closure with typetags and mirror
+def isolate: closure mirroredBy: m {
+	object: closure taggedAs: [/.at.lang.types.Isolate] mirroredBy: m;
+};
+
+/**
+ * alias for extend:with: as a mental note for the programmer he's extending isolates
+ */
+def extendIsolate: obj with: clo {
+	extend: obj with: clo taggedAs: [/.at.lang.types.Isolate];
+};
+
+def extendIsolate: obj with: clo taggedAs: tags {
+	extend: obj with: clo taggedAs: tags + [/.at.lang.types.Isolate]
+};
+
+def when: remoteRef disconnected: code {
+	def active := true;
+	def sub := whenever: remoteRef disconnected: {
+		if: active then: { subscription.cancel(); code() };
+	};	
+	def subscription := object: {
+		def cancel() {
+			active := false;
+			sub.cancel();
+		}
+	};
+	subscription;
+};
+
+def when: remoteRef reconnected: code {
+	def active := true;
+	def sub := whenever: remoteRef reconnected: {
+		if: active then: { subscription.cancel(); code() };
+	};
+	def subscription := object: {
+		def cancel() {
+			active := false;
+			sub.cancel();
+		}
+	};
+	subscription;
+};
+
+// example:
+// def fut := when: S discovered: { |s|
+//   system.println("S discovered");
+//   s; // fut will be resolved to 's'
+// } within: 2.minutes;
+// no discovery within 2 minutes = fut broken with timeout exception
+def when: typetag discovered: code within: timeout {
+  def [fut, res] := /.at.lang.futures.makeFuture();
+  def sub := when: typetag discovered: { |s|
+    res.resolve(code(s));
+  };
+  /.at.support.timer.when: timeout elapsed: {
+    res.ruin(
+      /.at.lang.futures.XTimeoutException.new(fut));
+    sub.cancel();
+  };
+  fut
+};
+
+// export an object for each tag it sports
+def export: someObject {
+	(tagsOf: someObject).each: {|tt|
+		export: someObject as: tt;
+	};
+};
+
+// a try:catch: method that catches any exception
+def try: closure catch: failClosure { 
+	try: closure catch: /.at.lang.types.Exception using: { |e| failClosure(e) };
+};
+
+// to be able to switch back to the default actor mirror when applying custom mirrors.
+def defaultActorMirror := reflectOnActor();
+
+
+// de-serialization
+def fromCode: code in: scope {
+	eval: (read: code) in: scope;
+};
+
+def fromCode: code {
+	eval: (read: code) in: {};
+};
+
+def Android := nil;
+def runningOnAndroid := false;
+runningOnAndroid := jlobby.java.lang.System.getProperty("java.vm.name","").toLowerCase() ~= "dalvik";
+if: runningOnAndroid then: {
+	Android := object: {
+		def Log := jlobby.android.util.Log;
+		def parent := jlobby.edu.vub.at.android.util.IATAndroid.getInstance().getParentActivity();
+	};
+};
+
+self

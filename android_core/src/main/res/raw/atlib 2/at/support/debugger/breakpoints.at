@@ -1,0 +1,145 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Software Languages Lab, 2006 - 2012
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+**/
+/** 
+ * Implementation of the different breakpoints supported by the AmbientTalk debugger called REME-D (read remedy). 
+ * More information about REME-D at AmbientTalk's google code site.
+ * @author egonzale
+**/
+def breakpointsModule := object: {
+	 // to be used by the Eclipse controller when Add Conditional Breakpoint... is added.
+	def conditionalBreakpoint := isolate:{
+		import /.at.support.debugger.util.TBreakpoint alias init := initBreakpoint;
+	
+		def init(cond, types) {
+			self.initBreakpoint(cond, types);
+		};
+		def toString(){
+			"conditional-breakpoint:" + self.breakpointId + ":cond:" + self.condition;
+		};
+	};
+
+	// defines a breakpoint which is tied to a particular line of code.
+	def codeBreakpoint := isolate: {
+		import /.at.support.debugger.util.TBreakpoint alias init := initBreakpoint;
+		def filename;
+		def lineNumber;		
+		
+		def init(name, number, cond, types){
+			def breakpointId := (name + "-" + number);			
+			self.initBreakpoint(cond, types, breakpointId);
+			filename := name;
+			lineNumber := number;
+		};
+		def getFilename() {filename};
+		def getLinenumber() {lineNumber};
+		def toString() {
+			"code-breakpoint:" + filename + ":" +lineNumber;
+		};
+	};
+	
+	// defines a breakpoint on an asynchronous message send 
+	// the execution pauses before the receiver invokes the method 
+	// corresponding to the aysnchronous message sent in the given of code.
+	def messageBreakpoint := extendIsolate: codeBreakpoint with: {	
+		def init(name, number) {
+		 	def cond := script: {|rcv, msg| 
+				def lineNumber := msg.getLocationLine();
+	  			def filename := msg.getLocationFilename();
+	  			def res := false;
+	  			if: ((nil != lineNumber).and: { nil != filename }) then:{
+					res :=  ((name == filename).and:{number == lineNumber})
+				};
+				res
+			} carrying: `[name, number]; 	
+			super^init(name, number, cond, [/.at.support.debugger.util.SenderBreakpoint, /.at.support.debugger.util.MessageBreakpoint]);
+		};
+		def toString() {
+			"message-breakpoint:" + super^toString();
+		};
+	};
+	
+	def messageResolvedBreakpoint := extendIsolate: messageBreakpoint with: {	
+		def init(name, number) {
+			super^init(name, number);
+			self.breakpointTypes := super^getBreakpointTypeTags() + [/.at.support.debugger.util.MessageResolveBreakpoint];
+		};
+		def onEntry() {false};
+		def toString() {
+			"messageResolved-breakpoint:"+ super^toString();
+		};
+	};
+	
+	// defines a breakpoint on a method 
+	// the execution pauses before the receiver invokes the method
+	// defined in the given line of code. 
+	// It only pauses executions as a result of an asynchronous message.
+	def methodBreakpoint := extendIsolate: codeBreakpoint with:{
+		def init(name, number) {
+			def cond := script: { |rcv, msg|
+				def res := false;
+				if: ((reflect: rcv).respondsTo(msg.selector)) then: {
+					def method :=  (reflect: rcv).grabMethod(msg.selector);
+					def sourceLocation := /.at.support.util.getSourceLocation(method);
+					if: (nil != sourceLocation) then: {
+						if: ((name == sourceLocation.fileName).and:{number == sourceLocation.line}) then: {
+							res := true;
+						};
+					};
+				};
+				res;
+			} carrying: `[name, number]; 
+			super^init(name, number, cond, [/.at.support.debugger.util.ReceiverBreakpoint]);
+		};
+		def toString() {
+			"method-breakpoint:"+ super^toString();
+		};
+	};
+	// defines a breakpoint on the resolution of a future attached to a message
+	// it is used internally by the debugger while executing an stepReturn command on a future-type message send,
+	// and for future-type message sends matching a messageReturnBreakpoints
+	def futureResolutionBreakpoint := extendIsolate: conditionalBreakpoint with: {
+		def init(msg) {
+			def condition := {|receiver, message| (receiver == (reflect: msg).invokeField(msg, `future)).and:{ (message.selector == `resolveWithValue).or:{message.selector == `ruinWithValue} } };
+			super^init(condition, [/.at.support.debugger.util.SenderBreakpoint]);
+		};
+		def toString() {
+			"futureResolution-breakpoint:"+ super^toString();
+		};
+	};	
+	
+	// defines a breakpoint on a method name
+	// the execution pauses before the receiver invokes a method
+	// with the given name ( as a result of an asynchornously message)
+	def symbolBreakpoint := extendIsolate: conditionalBreakpoint with: {
+		def init(selector) {
+			def condition := script: { |rcv, msg| msg.selector.text == selector.text } carrying: [`selector];
+			super^init(condition, [/.at.support.debugger.util.ReceiverBreakpoint]);
+		};
+		def toString() {
+			"symbol-breakpoint:"+ super^toString();
+		};	
+	};			
+};

@@ -1,0 +1,547 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/**
+ * An implementation of the DEAPspace algorithm by IBM Research.
+ * Cfr. Michael Nidd, "Service Discovery in DEAPspace",
+ *      IEEE Personal Communications, August 2001 pp. 39-45
+ *
+ * DEAPspace is a service discovery protocol with the unique property
+ * that - unlike regular beaconing algorithms where devices independently
+ * broadcast their services - all devices always broadcast their full
+ * 'world view' (i.e. all the services they know of). As such, the algorithm
+ * replaces N broadcasts of 1 service description each by 1 broadcast
+ * containing N service descriptions. This has two advantages:
+ *  1) a new device entering a new network environment receives service
+ *     information much more quickly because the first broadcast it receives
+ *     already contains a full world view.
+ *  2) because the # of broadcasts is more infrequent, devices can go into
+ *     idle mode for longer periods of time, saving precious energy.
+ *
+ * The disadvantage of this PUSH model of service discovery is that it
+ * may be heavy on a client device that only requires a particular kind of
+ * service. DEAPspace is service-type-agnostic: all devices broadcast
+ * all of their available services, although it is possible to restrict
+ * DEAPspace to discover/publish only services of a given type if only
+ * a single service type is relevant to an application.
+ *
+ * Implementation-wise, we make use of M2MI's omnihandles to efficiently
+ * but unreliably broadcast the service descriptions to all nearby devices
+ *
+ * From the point of view of the AmbientTalk programmer, the API to
+ * interact with DEAPspace is the same as for interacting with AT's
+ * native service discovery protocol.
+ *
+ * @author tvcutsem
+ */
+import /.bridges.m2mi.api;
+import /.at.support.timer;
+import /.at.lang.dynvars;
+import /.at.support.logger;
+
+def UtilModule := /.at.support.util;
+def Vector := /.at.collections.vector.Vector;
+
+// default observer of the DEAPspace protocol:
+def makeLogObserver(owner) {
+  object: {
+		def log := makeLogger("[deapspace.at][" + owner + "]: ", INFO); // <- set to DEBUG for more output
+		def starting() { log("starting deapspace protocol") };
+		def stopping() { log("stopping deapspace protocol") };
+		def discovered(serviceItem) { log("discovered item: " + serviceItem.service) };
+		def expired(serviceItem) { log("removing expired item: " + serviceItem.service) };
+		def ttlUpdated(serviceItem) { log("updated TTL of item: " + serviceItem.service) };
+		
+		def providing(serviceItem) { log("providing new item: " + serviceItem.service, DEBUG) };
+		def stopProviding(serviceItem) { log("stopped providing item: " + serviceItem.service, DEBUG) };
+		def refresh(localWorldView) {
+			localWorldView.each: { |serviceItem|
+				log("" + serviceItem.publisher + " -> " + serviceItem.timeToLive, DEBUG);
+			}
+		};
+		def broadcasting() { log("timed out, performing broadcast myself") };
+		def receivedBroadcast(numItemsInView) { log("received new view. #items = " + numItemsInView) };
+		def broadcastWithin(numMillisec) { log("will time out and broadcast in " + numMillisec) };
+		def noticedMissingService() { log("noticed one of my services missing, timing out early", DEBUG) };
+		def noticedAboutToExpire() { log("noticed one of my services about to expire, timing out early", DEBUG) };
+	};
+};
+
+// amount of time before a service advertisement times out (i.e. advertisement
+// must be refreshed before this timeout period)
+def dNormalExpiry := dynamicVariable: seconds(30);
+// a range X from which a timeout is uniformly selected. This timeout denotes
+// the time for this device to wait before re-broadcasting. Thanks to the use
+// of intervals, the algorithm becomes adaptive: devices will avoid 'broadcast
+// storms' by scheduling their own broadcast within a random timeout interval.
+def dNormalBackoffRange := dynamicVariable: [seconds(5), seconds(8)];
+// if the time-to-live of a provided service becomes smaller than dMinExpiry,
+// the device will perform a broadcast sooner to make sure its service does not expire
+def dMinExpiry := dynamicVariable: seconds(6);
+// short broadcast timeout range, used when a device sees that one of
+// its own provided services is about to time out (i.e. its time-to-live
+// is smaller than dMinExpiry)
+def dMinBackoffRange := dynamicVariable: [seconds(1), seconds(2)];
+
+// convert longs -> ints, then take random between [int1, int2], then convert
+// the resulting random number to a long again
+def long := /.at.support.symbiosis.&long;
+def uniformRandomLongInRange: range {
+	long(UtilModule.randomNumberBetween(range[1].intValue,range[2].intValue))
+};
+
+// a service description bundles together a service reference +
+// useful metadata describing the published service. It is an isolate
+// because it is passed along by-copy in each broadcast to all other nearby devices
+def ServiceDescription := isolate: {
+  def type; // the type of service I describe
+  def service; // a reference to the provided service object
+  def publisher; // the DEAPspaceDevice that advertises me
+  def timeToLive; // bookkeeping data that indicates how stale I am
+  def init(@args) {
+	  [type,service,publisher,timeToLive] := args;
+  };
+  def isProvidedBy(deapSpaceDevice) { publisher == deapSpaceDevice };
+  // equality based on service equality
+  def ==(other) { service == other.service };
+};
+
+// stores my view on all nearby available services
+// the view is a list (table) of service description items
+def localWorldView := [];
+
+// the currenly scheduled timeout handler that is fired if we
+// have not received an 'accept' message within a given timeout
+def scheduledTimeoutHandler;
+
+// identifies nearby 'devices' participating in the DEAPspace protocol
+deftype DEAPspaceListener;
+
+// a wrapped M2MI omnihandle that allows efficient but potentially
+// unreliable broadcasts to all nearby DEAPspace participants
+def omnirefToDEAPspaceListeners := omnireference: DEAPspaceListener;
+
+// compares a [Type,Closure] with another [Type,Closure] entry based on the closures
+def subscriptionComparator := { |s1,s2| s1[2] == s2[2] };
+
+// Vector<[Type,Closure]> for when:discovered: observers
+def oneShotSubscriptions := Vector.new(1, subscriptionComparator);
+
+// Vector<[Type,Closure]> for whenever:discovered: observers
+def permanentSubscriptions := Vector.new(1, subscriptionComparator);
+
+// Vector<[Type,Closure]> for whenever:lost: observers
+def lostServiceSubscriptions := Vector.new(1, subscriptionComparator);
+
+// counts the number of services I provide myself
+// (used for determining when I can stop broadcasting)
+def numProvidedServices := 0;
+
+// an observer that traces this algorithm
+def myObserver;
+
+// this object will be exported as a DEAPspaceListener such that
+// it can receive incoming views of other DEAPspaceListeners
+def myDEAPspaceListener := object: {
+	// invoked by another DEAPspaceDevice with its updated world view
+	def accept(sender, remoteWorldView) {
+		// filter out broadcasts initiated by myself
+		if: !(sender == myDEAPspaceListener) then: {
+			myObserver<-receivedBroadcast(remoteWorldView.length);
+			// cancel the timeout task such that we perform either the timeout
+			// behaviour OR this behaviour, but never both
+			scheduledTimeoutHandler.cancel();
+			// update our local service view with the newly received view
+			def interval := update(remoteWorldView);
+			// schedule a broadcast within the range returned by the update function
+			scheduleTimeoutIn(interval);	
+		}
+	}
+};
+
+def onTimeOut() {
+	// before I broadcast, I update the time-to-live of my own service descriptions
+	// (don't think this is necessary because refresher does not decrement TTL of
+	// local services, so the TTL of local services will always be the max. value)
+	/*localWorldView.each: { |serviceDescription|
+		if: (serviceDescription.isProvidedBy(myDEAPspaceListener)) then: {
+			serviceDescription.timeToLive := dNormalExpiry.value;
+		};
+	};*/
+	
+	// it's my turn to broadcast my world view to all nearby DEAPspaceDevices
+	myObserver<-broadcasting();
+	omnirefToDEAPspaceListeners<-accept(myDEAPspaceListener, localWorldView);
+	// schedule a new broadcast within the normal timeout range
+	scheduleTimeoutIn(dNormalBackoffRange.value);
+};
+
+def scheduleTimeoutIn(interval) {
+	def timeToWaitForBroadcast := uniformRandomLongInRange: interval;
+	myObserver<-broadcastWithin(timeToWaitForBroadcast);
+	// extra boolean check to ensure mutual exclusion of timeout or accept:
+	// just canceling the scheduled timer task is not enough as the timer may have
+	// already triggered and the <-apply message may already be in the actor's inbox
+	def proceed := true;
+	def scheduledTask := when: timeToWaitForBroadcast elapsed: {
+	  proceed.ifTrue: &onTimeOut;
+	};
+	scheduledTimeoutHandler := object: {
+		def cancel() { scheduledTask.cancel(); proceed := false }
+	};
+};
+
+// determines the rate at which we refresh the time-to-live of
+// discovered service description items
+def REFRESH_RATE := seconds(3);
+
+def startRefreshingMyView() {
+	whenever: REFRESH_RATE elapsed: {
+		myObserver<-refresh(localWorldView);
+		// remove all expired service descriptions from my local world view
+		localWorldView := localWorldView.filter: { |serviceDescription|
+			if: !(serviceDescription.isProvidedBy(myDEAPspaceListener)) then: {
+				serviceDescription.timeToLive := serviceDescription.timeToLive - REFRESH_RATE;
+				if: (serviceDescription.timeToLive < seconds(0)) then: {
+						// TRIGGER LOST EVENT: notify lost service subscribers
+						myObserver<-expired(serviceDescription);
+						notifyHandlers(serviceDescription.type, serviceDescription.service, lostServiceSubscriptions);
+						false // remove service description whose TTL has expired
+				}	else: {
+					true; // remote service still up-to-date
+				}
+			} else: {
+				true; // never delete one of my own services
+			}
+		}
+	};
+};
+
+// update my current local world view with a newly received remote world
+// view. Return either the normal or the minimum timeout interval to
+// ensure that none of my provided services expires
+def update(remoteWorldView) {
+	remoteWorldView.each: { |serviceDescription|
+		if: !(serviceDescription.isProvidedBy(myDEAPspaceListener)) then: {
+			// for all foreign service descriptions, check if I have a local
+			// service description
+			def idx := localWorldView.find: { |lsd| lsd == serviceDescription };
+			if: (nil != idx) then: {				
+				// if I do, then update its TTL value if the remote TTL is bigger than the local TTL
+				def localServiceDescription := localWorldView[idx];
+				if: (serviceDescription.timeToLive > localServiceDescription.timeToLive) then: {
+					localServiceDescription.timeToLive := serviceDescription.timeToLive;
+					myObserver<-ttlUpdated(localServiceDescription);
+				}
+			} else: {				
+				// if I do not, then add it to my local world view
+				localWorldView := localWorldView + [serviceDescription];
+				
+				// TRIGGER FOUND EVENT: notify subscribers
+				myObserver<-discovered(serviceDescription);
+				notifyHandlers(serviceDescription.type, serviceDescription.service, oneShotSubscriptions);
+				// remove all one-shot subscriptions
+				oneShotSubscriptions.clear();
+				notifyHandlers(serviceDescription.type, serviceDescription.service, permanentSubscriptions);
+				// if I only had one-shot subscriptions, and I don't provide anything, maybe I
+				// can stop the discovery protocol
+				stopProtocolIfNecessary();
+			}
+		}
+	};
+	
+	(if: (isMissingLocalService(remoteWorldView).or: {
+		    isLocalServiceAboutToExpire(remoteWorldView) }) then: {			
+		// a remote device misses one of my local services OR
+		// the TTL of one of my local services is about to expire =>
+		// schedule my next broadcast within a shorter period of time
+		dMinBackoffRange
+	} else: {
+	  // schedule my next broadcast within the normal period of time
+		dNormalBackoffRange
+	}).value
+	
+};
+
+def isMissingLocalService(remoteWorldView) {
+	if: (nil != localWorldView.find: { |serviceDescription|
+	  (serviceDescription.isProvidedBy(myDEAPspaceListener)).and: {
+		  !(remoteWorldView.contains(serviceDescription)) } }) then: {
+		
+		myObserver<-noticedMissingService();
+		true
+	} else: { false };
+};
+
+def isLocalServiceAboutToExpire(remoteWorldView) {
+	if: (nil != remoteWorldView.find: { |serviceDescription|
+		(serviceDescription.isProvidedBy(myDEAPspaceListener)).and: {
+			(serviceDescription.timeToLive < dMinExpiry.value) } }) then: {
+				
+		myObserver<-noticedAboutToExpire();
+		true
+	} else: { false };
+};
+
+def startProtocol() {	
+	myObserver<-starting();
+	
+	// enable reception of incoming DEAPspace notifications
+	def myListenerPublication := export: myDEAPspaceListener asTypeTag: DEAPspaceListener;
+	// start scheduling broadcasts of my local world view to other DEAPspace participants
+	scheduledTimeoutHandler := scheduleTimeoutIn(dNormalBackoffRange.value);
+	// periodically update the time-to-live property of remote service descriptions
+	def refreshTimerTask := startRefreshingMyView();
+	
+	// return a publication object that can be used to stop the protocol
+	object: {
+		def cancel() {
+			myObserver<-stopping();
+			
+			// stop receiving incoming DEAPspace notifications
+			myListenerPublication.unexport();
+			// stop scheduling broadcasts to other DEAPspace participants
+			scheduledTimeoutHandler.cancel();
+			// stop refreshing my world view
+			refreshTimerTask.cancel();
+			localWorldView := [];
+			
+			// ??? DGC: myDEAPspaceListener is passed by-ref in service descriptions
+			// takeOffline: myDEAPspaceListener
+		}
+	};
+};
+
+// because DEAPspace is type-agnostic (it discovers services of *any* type)
+// only one instance of the protocol should be running in each actor
+// these utility functions start and stop the protocol if necessary
+def protocolState;
+def startProtocolIfNecessary() {
+	if: (nil == protocolState) then: {
+		protocolState := startProtocol();
+	};
+};
+def stopProtocolIfNecessary() {
+	// only stop the protocol if:
+	//  - there are no more active subscriptions or provided services
+	//  - the protocol was previously active
+	if: (((((nil != protocolState).and: {
+		  permanentSubscriptions.isEmpty }).and: {
+		  lostServiceSubscriptions.isEmpty }).and: {
+		  oneShotSubscriptions.isEmpty }).and: {
+			numProvidedServices == 0 }) then: {
+	  protocolState.cancel();
+		protocolState := nil;
+	}
+};
+
+def exportService(type, service) {
+	startProtocolIfNecessary();
+	def sd := ServiceDescription.new(type, service, myDEAPspaceListener, dNormalExpiry.value);
+	localWorldView := localWorldView + [sd];
+	myObserver<-providing(sd);
+	numProvidedServices := numProvidedServices + 1;
+	object: {
+		def unexport() {
+			myObserver<-stopProviding(sd);
+			
+			// remove sd from the local world view
+			localWorldView := localWorldView.filter: { |localSD| !(localSD == sd) };
+			numProvidedServices := numProvidedServices - 1;
+			// if I only provided services and I removed the last one, stop the protocol
+			stopProtocolIfNecessary();
+		}
+	};
+};
+
+def registerHandler(typeToTrack, hdl, subscriptionType) {
+	startProtocolIfNecessary();
+	subscriptionType.add([typeToTrack, hdl]);
+	// return a subscription object
+	object: {
+		def serviceType := typeToTrack;
+		def handler := hdl;
+		def cancel() {
+			subscriptionType.remove([typeToTrack,hdl]);
+			// if this was the last subscription and I did not provide any
+			// services, stop the protocol
+			stopProtocolIfNecessary();
+		};
+	}
+};
+
+def notifyHandlers(serviceType, service, subscriptionType) {
+	subscriptionType.each: { |entry|
+		def [subscriptionType,handler] := entry;
+		// only notify the handlers whose types match
+		if: (serviceType.isSubtypeOf(subscriptionType)) then: {
+			handler<-apply([service])
+		};
+	}
+};
+
+// returns a table of remote discovered service objects whose type
+// is a subtype of the given type
+def discoveredServicesOfType(requiredType) {
+	localWorldView.filter: { |serviceDescription|
+		// description has to be remote
+	  ( !(serviceDescription.isProvidedBy(myDEAPspaceListener)) ).and: {
+		  // and the type has to match
+		  serviceDescription.type.isSubtypeOf(requiredType);
+	  }
+	}
+};
+
+def DEAPspaceProtocol := object: {
+	myObserver := makeLogObserver(myDEAPspaceListener);
+  def observer:=(obs) { myObserver := obs };
+
+	// PROTOCOL PARAMETERS
+	def dNormalExpiry := dNormalExpiry;
+	def dNormalBackoffRange := dNormalBackoffRange;
+	def dMinExpiry := dMinExpiry;
+	def dMinBackoffRange := dMinBackoffRange;
+
+	/**
+	 * Invokes the handler with a discovered service matching the
+	 * given type. If multiple discovered services are present,
+	 * a non-deterministically chosen service is provided.
+	 * Once the handler was triggered, it is automatically
+	 * cancelled, such that it cannot be applied more than once.
+	 *
+	 * Returns a subscription object which can be used to cancel
+	 * the registration of the handler. Note that canceling the
+	 * handler does not guaruantee that it will never be invoked
+	 * (an apply message for the handler might be pending in the
+	 *  actor's inbox at the time cancel is invoked)
+	 */
+	def when: type discovered: hdl {
+		// if the tracker already discovered services,
+		// apply the handler immediately on the first discovered
+		// service, and don't register it
+		def discoveredServices := discoveredServicesOfType(type);
+		if: (!discoveredServices.isEmpty) then: {
+			hdl<-apply([discoveredServices[1].service]);
+			// return a dummy subscription object
+			object: {
+				def serviceType := type;
+				def handler := hdl;
+				def cancel() { true };
+			};
+		} else: {
+			registerHandler(type, hdl, oneShotSubscriptions);
+		}
+	};
+
+	/**
+	 * Invokes the handler with a discovered service matching the
+	 * given type. The handler is triggered for every discovered
+	 * service. It may be invoked for the same service, but only
+	 * when that same service has been unavailable for longer than
+	 * the DEAPspace protocol's normal expiration period.
+	 *
+	 * Returns a subscription object which can be used to cancel
+	 * the registration of the handler. Note that canceling the
+	 * handler does not guaruantee that it will never be invoked
+	 * (an apply message for the handler might be pending in the
+	 *  actor's inbox at the time cancel is invoked)
+	 */
+	def whenever: type discovered: handler {
+		// apply the handler immediately to all previously discovered services
+		discoveredServicesOfType(type).each: { |descr| handler<-apply([descr.service]) };
+		registerHandler(type, handler, permanentSubscriptions);
+	};
+
+	/**
+	 * Invokes the handler with a discovered service matching the
+	 * given type. The handler is triggered every time that a
+	 * previously discovered service has become expired.
+	 * That is: the handler is triggered if a previously discovered
+	 * service now becomes unresponsive.
+	 *
+	 * Returns a subscription object which can be used to cancel
+	 * the registration of the handler. Note that canceling the
+	 * handler does not guaruantee that it will never be invoked
+	 * (an apply message for the handler might be pending in the
+	 *  actor's inbox at the time cancel is invoked)
+	 */
+	def whenever: type lost: handler {
+		registerHandler(type, handler, lostServiceSubscriptions);
+	};
+
+	/**
+	 * Make a service object available for discovery by remote devices.
+	 *
+	 * Returns a publication object which can be used to unexport
+	 * the service object.
+	 */
+	def export: obj as: type {
+		exportService(type, obj);
+	};
+
+	def DEAPspaceProtocolTest() {
+		extend: /.at.unit.test.UnitTest.new("DEAPspaceProtocolTest") with: {
+		
+			def testAsyncSimpleDiscovery() {
+				deftype DiscoveryTest;
+			
+				def peer := actor: {
+					deftype DiscoveryTest;
+					import /.at.discovery.deapspace;
+					import /.at.support.timer;
+					def pub := export: (object: {
+						def add(x,y) { system.println("add called!!!"); x + y };
+					}) as: DiscoveryTest; 
+					when: seconds(15) elapsed: {
+						pub.unexport();
+					}
+				};
+
+				import /.at.lang.futures;				
+				def [fut1, res1] := makeFuture();
+				def [fut2, res2] := makeFuture();
+			
+				def sub := when: DiscoveryTest discovered: { |service|
+					system.println("Successfully discovered a DiscoveryTest");
+					when: service<-add(1,2)@FutureMessage becomes: { |val|
+						self.assertEquals(3, val);
+						sub.cancel();
+						res1.resolve(true);
+					};
+					nil
+				};
+			
+				def sub2 := whenever: DiscoveryTest lost: { |service|
+					system.println("Lost a DiscoveryTest");
+					sub2.cancel();
+					res2.resolve(true);
+				};
+				group: [fut1,fut2]
+			};
+		};
+	}; // end DEAPspaceProtocolTest
+} // end DEAPspaceProtocol

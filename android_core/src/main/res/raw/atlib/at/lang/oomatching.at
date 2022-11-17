@@ -1,0 +1,215 @@
+/**
+ * AmbientTalk/2 Project
+ * (c) Programming Technology Lab, 2006 - 2007
+ * Authors: Tom Van Cutsem & Stijn Mostinckx
+ * 
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/* This module implements 'object templates', which enable the
+ * expression of 'object-oriented pattern matching'. This is
+ * particularly useful for doing highly expressive service
+ * discovery without having to resort to static types.
+ *
+ * Example:
+ *
+ * def personTemplate := template: {
+ *   def name := *; // wildcard, can be anything
+ *   def age := constraint: { _ < 25 }; // must be younger than 25
+ *   def address := template: {
+ *     def street := *; // any street, but street name must be filled in
+ *     def city := "Brussel"; // city must equal this string
+ *     // address may have arbitrary other data
+ *   };
+ *   def greet(); // person must have a greet method
+ * } taggedAs: [ Person ]; // object must be tagged as a Person
+ *
+ * Note that templates can be represented as plain objects. There is a
+ * special 'wildcard' value, '*', which is a simple alias for nil. Hence,
+ * nil matches everything. Constraints are represented as closures
+ * where the parameter '_' is bound to the runtime value of the field.
+ * They should return a boolean value and otherwise be side-effect-free.
+ *
+ * @author tvcutsem
+ */
+import /.at.lang.values;
+import /.at.lang.structuraltypes;
+
+// fact that wildcard is nil is important for implicitly
+// matching super with anything
+def WILDCARD := nil; //object: { nil };
+
+deftype MatchError <: /.at.lang.types.Exception;
+def XMatchError := /.at.lang.exceptions.createException(MatchError);
+
+def OOMatchModule := object: {
+	
+	def * := WILDCARD;
+	
+  deftype ObjectTemplate;
+
+  def MatchError := MatchError;
+
+  /**
+   * Returns true if the subject matches the given template,
+   * raises a MatchError otherwise.
+   *
+   * Matching proceeds as follows:
+   * 1) is subject tagged as all of the template's type tags (nominal type match)?
+   * 2) does the subject respond to all selectors defined
+   *    by the template (structural type match)?
+   * 3) does the contents of the subject's fields match with the
+   *    template's constraints (content match)?
+   *   match(Val, *).
+   *   match(Val, constant) :- Val = constant.
+   *   match(Val, template) :- ensure: Val matches: template.
+   *   match(Val, constraint) :- constraint(Val).
+   */
+  def ensure: subject matches: template {
+	  // == 1) nominal type match ==
+	  def templateTags := tagsOf: template;
+	  templateTags.each: { |tag|
+		  if: (!(is: subject taggedAs: tag).and: { !(tag == ObjectTemplate) }) then: {
+			  raise: XMatchError.new("Match error: subject is not tagged as " + tag);
+		  };
+		};
+		// == 2) structural type match ==
+		try: {
+			ensure: subject implements: (protocolOf: template);
+		} catch: StructuralTypeMismatch using: { |e|
+			raise: XMatchError.new("Match error: " + e.message);
+		};
+		// == 3) content match ==
+		def templateFields := (reflect: template).listFields();
+		templateFields.each: { |field|
+			def templateVal := field.readField;
+			{ |return|
+				// WILDCARD
+				if: (templateVal == WILDCARD) then: {
+					return(true);
+				};
+				
+				def subjectVal := (reflect: subject).invokeField(subject, field.name);
+				
+				// CONSTRAINT
+				if: (is: templateVal taggedAs: /.at.lang.types.Closure) then: {
+					// apply constraint
+					if: !(templateVal(subjectVal)) then: {
+						raise: XMatchError.new(
+							"Match error: constraint for field " + field.name + " failed. Value was: " + subjectVal);
+					} else: { return(true) };
+				};
+				
+				// TEMPLATE
+				if: (is: templateVal taggedAs: ObjectTemplate) then: {
+					// recursive match
+					ensure: subjectVal matches: templateVal;
+					return(true);
+				};
+				
+				// CONSTANT
+				if: (subjectVal == templateVal) then: {
+					true
+				} else: {
+					raise: XMatchError.new("Match error for field: " + field.name + ": "+ subjectVal + " != " + templateVal);
+				}
+			}.escape();
+		};
+		true;
+  }; // end ensure:matches:
+
+	/**
+	 * Tests whether a given object 'obj' matches a given template object
+	 * 'template'.
+	 */
+	def does: obj match: template {
+		try: {
+			ensure: obj matches: template;
+			true;
+		} catch: MatchError using: { |e|
+			false;
+		}
+	};
+
+  def template: clo {
+	  template: clo taggedAs: [];
+  };
+
+  // templates are objects
+  def template: clo taggedAs: types {
+	  object: clo taggedAs: [ @types, ObjectTemplate ];
+  };
+
+  // constraint: { ... } => { |_| ... }
+  // the closure should be nullary and return a boolean
+  def constraint: clo {
+	  closure(method(`constraint, [`_], clo.method.bodyExpression,[]), clo.context);
+  };
+
+	def OOMatchModuleTest() {
+		extend: /.at.unit.test.UnitTest.new("OOMatchModuleTest") with: {
+			
+			def testConstantMatch() {
+				ensure: (object: {
+					def foo := "bar";
+				}) matches: (template: {
+					def foo := "bar";
+				});
+			};
+			
+			deftype Foo;
+			def testTypeMatch() {
+				ensure: (object: {
+					nil
+				} taggedAs: [ Foo ]) matches: (template: {
+					nil
+				} taggedAs: [ Foo ]);
+			};
+			
+			def testStructuralMatch() {
+				ensure: (object: {
+					def foozle() { 1 };
+				}) matches: (template: {
+					def foozle();
+				});
+			};
+			
+			def testConstraintMatch() {
+				ensure: (object: {
+					def number := 5
+				}) matches: (template: {
+					def number := constraint: { _ > 0 };
+				});
+			};
+			
+			def testObjectWithOtherParent() {
+				ensure: (extend: (object: { nil}) with: {
+					nil
+				}) matches: (template: {
+					nil
+				});
+			};
+			
+		};
+	}; // end OOMatchModuleTest
+	
+} // end OOMatchModule
