@@ -1,34 +1,84 @@
+import /.at.lang.futures;
+import /.at.lang.totam;
+
 def log(text) {
-  Android.Log.i("weKittens", text);
+  Android.Log.i("weKittens", "\n\n#####\n"+ text + "\n#####");
 };
+
+deftype remotePlayer;
 
 def makeWeKittens() {
 
-  def otherPlayers; // stores remote players.
+  def otherPlayers := [];// stores remote players.
+  def playerName := "EMPTY PLAYER NAME";
+
+  def currentGameState; // current game state
+  def tupleSpace; //tuple space, useful to keep track of cards played during the game
 
   def gui;
 
   //interface for android gui.
   def localInterface := object: {
+    def ping(newgui){
+        log("GUI HAS ARRIVED");
+        gui := newgui;
+    };
 
+    def addNewPlayer(name){
+        log("NEW PLAYER HAS ARRIVED "+name);
+        playerName := name;
+        goOnline();
+    };
+
+    def getPlayerName(){
+        playerName;
+    };
+
+    def startGame(){
+        otherPlayers.each:{ |player|
+            player<-startGame();
+        };
+    }
   };
 
   //interface for remote painters.
   def remoteInterface := object: {
+
+    def getPlayerName(){
+        playerName;
+    };
+
+    def startGame(){
+        gui.startGameAT();
+    };
 
   }; //end-remoteInterface
 
 
   def goOnline() {
   	// setup peer-to-peer service discovery
+  	log("Going online, waiting for new players to connect");
+
+  	whenever: remotePlayer discovered: { |player| //when a new player is discovered
+  	    if: !otherPlayers.contains(player) then: { //if new player
+  	        log("New player found: " + player);
+  	        otherPlayers := otherPlayers + [player];
+            when: player<-getPlayerName()@FutureMessage becomes:{|name| //wait to retrieve player's name
+                gui.foundNewPlayer(name);
+            }
+  	    };
+  	};
+  	export: remoteInterface as: remotePlayer; //export ATInterface object
   };
 
-  goOnline();
-  log("Hallo Android!!");
+  network.online();
+  log("Hallo Android!!"); //?
 
   // example symbiosis
-  Android.parent.topExplosionAnimation();
+  //Android.parent.topExplosionAnimation();
+
+  gui := Android.parent.registerATApp(localInterface); //import gui for modifications
 };
 
-network.online;
+//network.online;
 self;

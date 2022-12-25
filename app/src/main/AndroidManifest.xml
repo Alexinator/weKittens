@@ -10,7 +10,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
-        <activity android:name="edu.vub.at.wekittens.MainActivity" android:screenOrientation="portrait" android:configChanges="keyboard|keyboardHidden|orientation">
+        <activity android:name="edu.vub.at.wekittens.LobbyActivity" android:screenOrientation="portrait" android:configChanges="keyboard|keyboardHidden|orientation">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -19,6 +19,8 @@
         </activity>
 
         <activity android:name="edu.vub.at.wekittens.WeKittensAssetInstaller" android:screenOrientation="portrait" android:configChanges="keyboard|keyboardHidden|orientation"></activity>
+
+        <activity android:name=".MainActivity" android:screenOrientation="portrait" android:configChanges="keyboard|keyboardHidden|orientation"></activity>
 
     </application>
 

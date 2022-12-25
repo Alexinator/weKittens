@@ -16,16 +16,11 @@ import android.view.animation.AnimationUtils;
 import android.widget.Button;
 import android.widget.TextView;
 
-import java.io.File;
 import java.util.ArrayList;
 
-import edu.vub.at.IAT;
 import edu.vub.at.android.util.IATAndroid;
 
 public class MainActivity extends AppCompatActivity implements HandAction {
-
-    private static IAT iat;
-    private static final int _ASSET_INSTALLER_ = 0;
 
     private CardViewAdapter adapter;
 
@@ -41,17 +36,12 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-
-        if (iat == null) {
-            Intent i = new Intent(this, WeKittensAssetInstaller.class);
-            //Bundle bundle = new Bundle();
-            //bundle.putString("basedir",getExternalFilesDir(null).getAbsolutePath());
-            //i.putExtras(bundle);
-            startActivityForResult(i, _ASSET_INSTALLER_);
-        }
+        Intent intent = getIntent();
+        Bundle bundle = intent.getBundleExtra("bundle");
+        ArrayList<String> players = (ArrayList<String>) bundle.getSerializable("players");
 
         // create new card deck
-        int playerCount = 4;
+        int playerCount = players.size();
         cardDeck = new Deck(playerCount); //TODO: do this when a new round has started, pass the number of players
 
         // TODO: you may have to create a way to sync decks between devices when a round has started
@@ -172,52 +162,4 @@ public class MainActivity extends AppCompatActivity implements HandAction {
     }
 
 
-
-    // Manage AmbientTalk Startup
-
-
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        Log.v("weKittens", "Return of Asset Installer activity");
-        switch (requestCode) {
-            case (_ASSET_INSTALLER_):
-                if (resultCode == Activity.RESULT_OK) {
-                    new StartIATTask().execute();
-                }
-                break;
-        }
-    }
-
-
-    public class StartIATTask extends AsyncTask<Void, String, Void> {
-
-        private ProgressDialog pd;
-
-        protected void onProgressUpdate(String... values) {
-            super.onProgressUpdate(values);
-            pd.setMessage(values[0]);
-        }
-
-        protected void onPreExecute() {
-            super.onPreExecute();
-            pd = ProgressDialog.show(MainActivity.this, "weKittens", "Starting AmbientTalk");
-        }
-
-        protected void onPostExecute(Void result) {
-            super.onPostExecute(result);
-            pd.dismiss();
-        }
-
-        @Override
-        protected Void doInBackground(Void... params) {
-            try {
-                iat = IATAndroid.create(MainActivity.this);
-
-                this.publishProgress("Loading weKittens code");
-                iat.evalAndPrint("import /.demo.weKittens.weKittens.makeWeKittens()", System.err);
-            } catch (Exception e) {
-                Log.e("AmbientTalk", "Could not start IAT", e);
-            }
-            return null;
-        }
-    }
 }
