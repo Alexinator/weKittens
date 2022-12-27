@@ -63,21 +63,6 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         this.myCards = this.cardDeck.listToCardsList(this.playersCards.get(this.playerId)); //retrieve player cards
         System.out.println("Player ["+this.playerId+"] cards: "+this.myCards);
 
-        // setup players placement on the board
-        for(int i = 0; i < playerCount; i++){
-            if(i != this.playerId){
-                if(leftPlayer == -1){
-                    this.leftPlayer = i;
-                }
-                else if(topPlayer == -1){
-                    this.topPlayer = i;
-                }
-                else{
-                    rightPlayer = i;
-                }
-            }
-        }
-
         updateTitle();
 
         // set up hand stack
@@ -99,21 +84,77 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         drawingview = findViewById(R.id.drawingview);
         drawingview.playCard(cardDeck.peekTopCard());
 
-        // setup other player hands
+        // setup other player hands + board placement based on the player's id
         if(playerCount == 2){
-            drawingview.setLeftPlayerCount(this.playersCards.get(leftPlayer).size());
-            drawingview.setTopPlayerCount(0); // no player
-            drawingview.setRightPlayerCount(0); // no player
+            if(this.playerId == 0){
+                this.leftPlayer = 1;
+                drawingview.setLeftPlayerCount(this.playersCards.get(1).size());
+                drawingview.setTopPlayerCount(0); // no player
+                drawingview.setRightPlayerCount(0); // no player
+            }
+            else if(this.playerId == 1){
+                this.rightPlayer = 0;
+                drawingview.setLeftPlayerCount(0); // no player
+                drawingview.setTopPlayerCount(0); // no player
+                drawingview.setRightPlayerCount(this.playersCards.get(0).size());
+            }
         }
         else if(playerCount == 3){
-            drawingview.setLeftPlayerCount(this.playersCards.get(leftPlayer).size());
-            drawingview.setTopPlayerCount(this.playersCards.get(topPlayer).size());
-            drawingview.setRightPlayerCount(0); // no player
+            if(this.playerId == 0){
+                this.leftPlayer = 1;
+                this.topPlayer = 2;
+                drawingview.setLeftPlayerCount(this.playersCards.get(1).size());
+                drawingview.setTopPlayerCount(this.playersCards.get(2).size());
+                drawingview.setRightPlayerCount(0); // no player
+            }
+            else if(this.playerId == 1){
+                this.leftPlayer = 2;
+                this.rightPlayer = 0;
+                drawingview.setLeftPlayerCount(this.playersCards.get(2).size());
+                drawingview.setTopPlayerCount(0); // no player
+                drawingview.setRightPlayerCount(this.playersCards.get(0).size());
+            }
+            else if(this.playerId == 2) {
+                this.rightPlayer = 1;
+                this.topPlayer = 0;
+                drawingview.setLeftPlayerCount(0); // no player
+                drawingview.setTopPlayerCount(this.playersCards.get(0).size());
+                drawingview.setRightPlayerCount(this.playersCards.get(1).size());
+            }
         }
         else{
-            drawingview.setLeftPlayerCount(this.playersCards.get(leftPlayer).size());
-            drawingview.setTopPlayerCount(this.playersCards.get(topPlayer).size());
-            drawingview.setRightPlayerCount(this.playersCards.get(rightPlayer).size());
+            if(this.playerId == 0){
+                this.leftPlayer = 1;
+                this.topPlayer = 2;
+                this.rightPlayer = 3;
+                drawingview.setLeftPlayerCount(this.playersCards.get(1).size());
+                drawingview.setTopPlayerCount(this.playersCards.get(2).size());
+                drawingview.setRightPlayerCount(this.playersCards.get(3).size());
+            }
+            else if(this.playerId == 1){
+                this.leftPlayer = 2;
+                this.topPlayer = 3;
+                this.rightPlayer = 0;
+                drawingview.setLeftPlayerCount(this.playersCards.get(2).size());
+                drawingview.setTopPlayerCount(this.playersCards.get(3).size());
+                drawingview.setRightPlayerCount(this.playersCards.get(0).size());
+            }
+            else if(this.playerId == 2){
+                this.leftPlayer = 3;
+                this.topPlayer = 0;
+                this.rightPlayer = 1;
+                drawingview.setLeftPlayerCount(this.playersCards.get(3).size());
+                drawingview.setTopPlayerCount(this.playersCards.get(0).size());
+                drawingview.setRightPlayerCount(this.playersCards.get(1).size());
+            }
+            else if(this.playerId == 3){
+                this.leftPlayer = 0;
+                this.topPlayer = 1;
+                this.rightPlayer = 2;
+                drawingview.setLeftPlayerCount(this.playersCards.get(0).size());
+                drawingview.setTopPlayerCount(this.playersCards.get(1).size());
+                drawingview.setRightPlayerCount(this.playersCards.get(2).size());
+            }
         }
 
         // create new card deck
