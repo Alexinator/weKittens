@@ -17,6 +17,7 @@ import android.widget.Button;
 import android.widget.TextView;
 
 import java.util.ArrayList;
+import java.util.List;
 
 import edu.vub.at.android.util.IATAndroid;
 
@@ -30,6 +31,15 @@ public class MainActivity extends AppCompatActivity implements HandAction {
     private Button btnPlayerTop, btnPlayerLeft, btnPlayerRight;
     private Animation animExplosionTop, animExplosionBottom, animExplosionLeft, animExplosionRight;
 
+    // added attributes
+    private GameLogic gameLogic;
+    private int playerId;
+    private List<List<Integer>> playersCards;
+    private List<Card> myCards;
+    private int leftPlayer = -1;
+    private int topPlayer = -1;
+    private int rightPlayer = -1;
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -39,17 +49,43 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         Intent intent = getIntent();
         Bundle bundle = intent.getBundleExtra("bundle");
         ArrayList<String> players = (ArrayList<String>) bundle.getSerializable("players");
+        Boolean hasStartedTheGame = (Boolean) bundle.getBoolean("hasStartedTheGame");
+        int playerCount = players.size();
+        this.gameLogic = GameLogic.INSTANCE;
+
+        this.playersCards = gameLogic.getPlayersCards(); // get players cards
+        this.cardDeck = gameLogic.getDeck(); // retrieve the deck
+        this.playerId = gameLogic.getPlayerId(); //retrieve player id
+        this.myCards = this.cardDeck.listToCardsList(this.playersCards.get(this.playerId)); //retrieve player cards
+        System.out.println("Player ["+this.playerId+"] cards: "+this.myCards);
+
+        // setup players placement on the board
+        for(int i = 0; i < playerCount; i++){
+            if(i != this.playerId){
+                if(leftPlayer == -1){
+                    this.leftPlayer = i;
+                }
+                else if(topPlayer == -1){
+                    this.topPlayer = i;
+                }
+                else{
+                    rightPlayer = i;
+                }
+            }
+        }
+
+        updateTitle();
 
         // create new card deck
-        int playerCount = players.size();
-        cardDeck = new Deck(playerCount); //TODO: do this when a new round has started, pass the number of players
+        System.out.println("NB PLAYERS >>>>"+ playerCount);
+        //cardDeck = new Deck(playerCount); //TODO: do this when a new round has started, pass the number of players
 
         // TODO: you may have to create a way to sync decks between devices when a round has started
         // Try to modify the deck class so that you can easily serialize and deserialize a decks content
         // in order to share it with AmbientTalk and the rest of the connected devices through AmbientTalk
 
         // set up hand stack
-        ArrayList<Card> cards = new ArrayList<>();
+        List<Card> cards = this.myCards;
 
         RecyclerView handView = findViewById(R.id.playerhand);
         LinearLayoutManager horizontalLayoutManager = new LinearLayoutManager(MainActivity.this,
@@ -65,12 +101,24 @@ public class MainActivity extends AppCompatActivity implements HandAction {
 
         // setup top card
         drawingview = findViewById(R.id.drawingview);
-        //drawingview.playCard(cardDeck.peekTopCard());
+        drawingview.playCard(cardDeck.peekTopCard());
 
         // setup other player hands
-        drawingview.setLeftPlayerCount(3); //TODO: set initially to 0
-        drawingview.setTopPlayerCount(3);
-        drawingview.setRightPlayerCount(3);
+        if(playerCount == 2){
+            drawingview.setLeftPlayerCount(this.playersCards.get(leftPlayer).size()); //TODO: set initially to 0
+            drawingview.setTopPlayerCount(0); // no player
+            drawingview.setRightPlayerCount(0); // no player
+        }
+        else if(playerCount == 3){
+            drawingview.setLeftPlayerCount(this.playersCards.get(leftPlayer).size()); //TODO: set initially to 0
+            drawingview.setTopPlayerCount(this.playersCards.get(topPlayer).size());
+            drawingview.setRightPlayerCount(0); // no player
+        }
+        else{
+            drawingview.setLeftPlayerCount(this.playersCards.get(leftPlayer).size()); //TODO: set initially to 0
+            drawingview.setTopPlayerCount(this.playersCards.get(topPlayer).size());
+            drawingview.setRightPlayerCount(this.playersCards.get(rightPlayer).size());
+        }
 
         // setup animations
         animExplosionTop    = AnimationUtils.loadAnimation(getApplicationContext(), R.anim.explosion_top);
@@ -92,13 +140,13 @@ public class MainActivity extends AppCompatActivity implements HandAction {
 
 
         // TODO: do this when a round has started
-        cards.add(cardDeck.takeCard(Card.CardType.defuse)); // every player takes at least one defuse
+        //cards.add(cardDeck.takeCard(Card.CardType.defuse)); // every player takes at least one defuse
 
-        for (int i=0; i<playerCount-1; i++)
-            cardDeck.takeCard(Card.CardType.defuse);  // simulate removing the defuse cards for the other players
+        //for (int i=0; i<playerCount-1; i++)
+        //    cardDeck.takeCard(Card.CardType.defuse);  // simulate removing the defuse cards for the other players
 
-        drawCards(7);
-        cardDeck.addExplodingKittens();
+        //drawCards(7);
+        //cardDeck.addExplodingKittens();
 
         Log.i("dd","d");
     }
@@ -153,12 +201,31 @@ public class MainActivity extends AppCompatActivity implements HandAction {
     // you should check if this is valid, if not you shouldn't update the drawingview and return false
     @Override
     public boolean cardPlayed(Card card) {
+        //boolean canPlayThisCard =
+        this.gameLogic.playCard(card,this.playerId, 1); //TODO hardcoded
 
         //TODO: don't do this if card is not valid, maybe show a toast indicating that the move is invalid and return false
         drawingview.playCard(card);
         drawingview.invalidate();
-
         return true;
+    }
+
+    private boolean treatCard(Card card){
+        return false;
+    }
+
+    /**
+     * Update title to let the player know if this is their turn or not
+     */
+    private void updateTitle(){
+        if (this.gameLogic.getPlayersStates().get(this.playerId) == this.gameLogic.PLAY) {
+            setTitle("Your turn");
+        } else if(this.gameLogic.getPlayersStates().get(this.playerId) == this.gameLogic.WAIT) {
+            setTitle("Not your turn");
+        }
+        else if(this.gameLogic.getPlayersStates().get(this.playerId) == this.gameLogic.DEAD){
+            setTitle("You are dead");
+        }
     }
 
 

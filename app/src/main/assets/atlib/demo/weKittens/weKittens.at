@@ -1,3 +1,4 @@
+def leaseMod := /.at.lang.leasedrefs;
 import /.at.lang.futures;
 import /.at.lang.totam;
 
@@ -11,9 +12,10 @@ def makeWeKittens() {
 
   def otherPlayers := [];// stores remote players.
   def playerName := "EMPTY PLAYER NAME";
+  def playerId;
 
-  def currentGameState; // current game state
-  def tupleSpace; //tuple space, useful to keep track of cards played during the game
+  def game; // current game state
+  def tuples; // tuple space, useful to keep track of cards played during the game
 
   def gui;
 
@@ -35,10 +37,38 @@ def makeWeKittens() {
     };
 
     def startGame(){
+        playerId := 0;
+        game := jlobby.edu.vub.at.wekittens.GameLogic.new(playerId, otherPlayers.length+1);
+        def deck := game.getDeckList();
+        def playersCards := game.getPlayersCards();
+        def playersStates := game.getPlayersStates();
+        def nbPlayers := game.getNbPlayers();
+        // start the tuple space if game starter
+        tuples := makeTupleSpace();
+        tuples.goOnline(); // tuples go online
+        def otherPlayerId := 0;
         otherPlayers.each:{ |player|
-            player<-startGame();
+            otherPlayerId := otherPlayerId + 1;
+            player<-startGame(otherPlayerId, deck, playersCards, playersStates, nbPlayers); // send needed information to players
         };
-    }
+        waitForTuples();
+    };
+
+    def sendTuple(tupl){
+        def tupl := tupl;
+        def t := tuple: [tupl[1], tupl[2], tupl[3]];
+        log(t);
+        tuples.inject: t;
+    };
+  };
+
+    // wait for tuples to be received
+  def waitForTuples(){
+        def tu := tuple: [var: cardId, var: from, var: to];
+        def waitForIncomings := tuples.whenever: tu in:{
+
+        };
+        waitForIncomings;
   };
 
   //interface for remote painters.
@@ -48,8 +78,12 @@ def makeWeKittens() {
         playerName;
     };
 
-    def startGame(){
-        gui.startGameAT();
+    def startGame(id,deck,playersCards,playerStates,nbPlayers){
+        tuples := makeTupleSpace();
+        tuples.goOnline();
+        playerId := id;
+        gui.startGameAT(id,deck,playersCards,playerStates,nbPlayers);
+        waitForTuples();
     };
 
   }; //end-remoteInterface
@@ -73,6 +107,7 @@ def makeWeKittens() {
 
   network.online();
   log("Hallo Android!!"); //?
+  //jlobby.edu.vub.at.wekittens.GameLogic.test();
 
   // example symbiosis
   //Android.parent.topExplosionAnimation();

@@ -20,7 +20,7 @@ public class DrawingView extends View {
 
     private final int STACK_MAX_SIZE=3;
     private final Card BLANK_CARD = new Card(Card.CardType.back, "card" +
-            "");
+            "",-1); // added -1 for blank card
     private final int MAX_ANGLE = 10;
 
 

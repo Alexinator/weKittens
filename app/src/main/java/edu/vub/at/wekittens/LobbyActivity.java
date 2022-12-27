@@ -22,6 +22,7 @@ import android.widget.Toast;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.List;
 
 import edu.vub.at.IAT;
 import edu.vub.at.android.util.IATAndroid;
@@ -39,6 +40,8 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
     private ArrayList<String> players;
     private ListView listView;
     private ArrayAdapter<String> adapter;
+    // allow us to know if the player has started the game
+    private boolean hasStartedTheGame = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -137,6 +140,7 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
      */
     private void startGame(){
         atws.startGame();
+        hasStartedTheGame = true;
         changeActivity();
     }
 
@@ -144,11 +148,12 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
      * Start the game when one of the player has pressed the start button
      */
     @Override
-    public void startGameAT(){
+    public void startGameAT(int playerId, List<Integer> deck, List<List<Integer>> playersCards,List<Integer> playersStates, int nbPlayers){
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 //printToast("NEW GAME STARTED",Toast.LENGTH_LONG);
+                new GameLogic(playerId, deck, playersCards, playersStates, nbPlayers); // create the GameLogic object
                 changeActivity();
             }
         });
@@ -161,14 +166,11 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
     private void changeActivity(){
         Intent intent = new Intent(this,MainActivity.class);
         Bundle bundle = new Bundle();
+        bundle.putBoolean("hasStartedTheGame", hasStartedTheGame);
         bundle.putSerializable("players",(Serializable) players);
         intent.putExtra("bundle",bundle);
         startActivity(intent);
     }
-
-
-
-
 
     // ############
     // ##   AT   ##
@@ -233,6 +235,24 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
             }
             return null;
         }
+    }
+
+    // ############
+    // ## Tuples ##
+    // ############
+
+    // -> should have done that in another class but I was too far in the project to change my structure
+    // -> to be improved -> create another class to correctly handle AT
+
+    /**
+     * Handle incoming tuples from AT
+     * @param cardId the card id
+     * @param from the emitter
+     * @param to the receiver
+     */
+    @Override
+    public void handleTuple(int cardId, int from, int to){
+        GameLogic.INSTANCE.handleTuple(cardId,from,to);
     }
 
 }

@@ -20,12 +20,19 @@ public class Card {
 
     private CardType type;
     private String variant;
+    private int cardId; // use id for easier AT
 
     private int id = 0;
 
-    public Card(CardType type, String variant) {
+    // added -1 in DrawingView for card creation
+    public Card(CardType type, String variant, int cardId) {
         this.type = type;
         this.variant = variant;
+        this.cardId = cardId;
+    }
+
+    public int getId(){
+        return this.cardId;
     }
 
     public Card(Card c) {
