@@ -16,5 +16,5 @@ public interface JWeKittens {
 
     public void startGameAT(int playerId, List<Integer> deck, List<List<Integer>> playersCards,List<Integer> playersStates, int nbPlayers);
 
-    public void handleTuple(int cardId, int from, int to);
+    public void handleTuple(int cardId, int from, int to, int roundNb);
 }

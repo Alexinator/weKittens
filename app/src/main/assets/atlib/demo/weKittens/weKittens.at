@@ -16,6 +16,7 @@ def makeWeKittens() {
 
   def game; // current game state
   def tuples; // tuple space, useful to keep track of cards played during the game
+  def currentRound;
 
   def gui;
 
@@ -38,6 +39,7 @@ def makeWeKittens() {
 
     def startGame(){
         playerId := 0;
+        currentRound := -1;
         game := jlobby.edu.vub.at.wekittens.GameLogic.new(playerId, otherPlayers.length+1);
         def deck := game.getDeckList();
         def playersCards := game.getPlayersCards();
@@ -45,28 +47,36 @@ def makeWeKittens() {
         def nbPlayers := game.getNbPlayers();
         // start the tuple space if game starter
         tuples := makeTupleSpace();
-        tuples.goOnline(); // tuples go online
         def otherPlayerId := 0;
         otherPlayers.each:{ |player|
             otherPlayerId := otherPlayerId + 1;
             player<-startGame(otherPlayerId, deck, playersCards, playersStates, nbPlayers); // send needed information to players
         };
+        tuples.goOnline(); // tuples go online
         waitForTuples();
     };
 
-    def sendTuple(tupl){
-        def tupl := tupl;
-        def t := tuple: [tupl[1], tupl[2], tupl[3]];
+    def sendTuple(cardId, from, to, currentRound){
+        def t := tuple: ["Message", cardId, from, to, currentRound];
         log(t);
-        tuples.inject: t;
+        tuples.inject: t; // inject public tuple
     };
   };
 
     // wait for tuples to be received
   def waitForTuples(){
-        def tu := tuple: [var: cardId, var: from, var: to];
-        def waitForIncomings := tuples.whenever: tu in:{
-
+        def tu := tuple: ["Message", var: `cardId, var: `from, var: `to, var:`round];
+        def waitForIncomings := tuples.whenever: tu read:{ // non blocking reading
+            log("currentRound: "+currentRound);
+            log("round: "+round);
+            if: ((from != playerId)) then: { // do nothing if we read our own tuple and
+                if: (round != currentRound) then: { //we do not read an old tuple
+                    currentRound := round;
+                    gui.handleTuple(cardId, from, to, round);
+                };
+            } else:{
+                currentRound := round;
+            };
         };
         waitForIncomings;
   };
@@ -82,8 +92,13 @@ def makeWeKittens() {
         tuples := makeTupleSpace();
         tuples.goOnline();
         playerId := id;
+        currentRound := -1;
         gui.startGameAT(id,deck,playersCards,playerStates,nbPlayers);
         waitForTuples();
+    };
+
+    def getTuple(cardId, from, to){
+
     };
 
   }; //end-remoteInterface

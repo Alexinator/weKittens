@@ -15,6 +15,7 @@ import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
 import android.widget.Button;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -33,9 +34,11 @@ public class MainActivity extends AppCompatActivity implements HandAction {
 
     // added attributes
     private GameLogic gameLogic;
+    public static MainActivity INSTANCE;
     private int playerId;
     private List<List<Integer>> playersCards;
     private List<Card> myCards;
+    private int playerCount = 0;
     private int leftPlayer = -1;
     private int topPlayer = -1;
     private int rightPlayer = -1;
@@ -45,12 +48,13 @@ public class MainActivity extends AppCompatActivity implements HandAction {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        INSTANCE = this;
 
         Intent intent = getIntent();
         Bundle bundle = intent.getBundleExtra("bundle");
         ArrayList<String> players = (ArrayList<String>) bundle.getSerializable("players");
         Boolean hasStartedTheGame = (Boolean) bundle.getBoolean("hasStartedTheGame");
-        int playerCount = players.size();
+        this.playerCount = players.size();
         this.gameLogic = GameLogic.INSTANCE;
 
         this.playersCards = gameLogic.getPlayersCards(); // get players cards
@@ -76,14 +80,6 @@ public class MainActivity extends AppCompatActivity implements HandAction {
 
         updateTitle();
 
-        // create new card deck
-        System.out.println("NB PLAYERS >>>>"+ playerCount);
-        //cardDeck = new Deck(playerCount); //TODO: do this when a new round has started, pass the number of players
-
-        // TODO: you may have to create a way to sync decks between devices when a round has started
-        // Try to modify the deck class so that you can easily serialize and deserialize a decks content
-        // in order to share it with AmbientTalk and the rest of the connected devices through AmbientTalk
-
         // set up hand stack
         List<Card> cards = this.myCards;
 
@@ -105,20 +101,29 @@ public class MainActivity extends AppCompatActivity implements HandAction {
 
         // setup other player hands
         if(playerCount == 2){
-            drawingview.setLeftPlayerCount(this.playersCards.get(leftPlayer).size()); //TODO: set initially to 0
+            drawingview.setLeftPlayerCount(this.playersCards.get(leftPlayer).size());
             drawingview.setTopPlayerCount(0); // no player
             drawingview.setRightPlayerCount(0); // no player
         }
         else if(playerCount == 3){
-            drawingview.setLeftPlayerCount(this.playersCards.get(leftPlayer).size()); //TODO: set initially to 0
+            drawingview.setLeftPlayerCount(this.playersCards.get(leftPlayer).size());
             drawingview.setTopPlayerCount(this.playersCards.get(topPlayer).size());
             drawingview.setRightPlayerCount(0); // no player
         }
         else{
-            drawingview.setLeftPlayerCount(this.playersCards.get(leftPlayer).size()); //TODO: set initially to 0
+            drawingview.setLeftPlayerCount(this.playersCards.get(leftPlayer).size());
             drawingview.setTopPlayerCount(this.playersCards.get(topPlayer).size());
             drawingview.setRightPlayerCount(this.playersCards.get(rightPlayer).size());
         }
+
+        // create new card deck
+        System.out.println("NB PLAYERS >>>>"+ playerCount);
+        //cardDeck = new Deck(playerCount); //TODO: do this when a new round has started, pass the number of players
+
+        // TODO: you may have to create a way to sync decks between devices when a round has started
+        // Try to modify the deck class so that you can easily serialize and deserialize a decks content
+        // in order to share it with AmbientTalk and the rest of the connected devices through AmbientTalk
+
 
         // setup animations
         animExplosionTop    = AnimationUtils.loadAnimation(getApplicationContext(), R.anim.explosion_top);
@@ -201,8 +206,15 @@ public class MainActivity extends AppCompatActivity implements HandAction {
     // you should check if this is valid, if not you shouldn't update the drawingview and return false
     @Override
     public boolean cardPlayed(Card card) {
+        System.out.println("OK PRINT CARD CALLED");
         //boolean canPlayThisCard =
-        this.gameLogic.playCard(card,this.playerId, 1); //TODO hardcoded
+        String returnMessage = this.gameLogic.playCard(card,this.playerId, 1); //TODO hardcoded
+        System.out.println("return message: "+returnMessage);
+        System.out.println(returnMessage.equals("ok"));
+        if(!returnMessage.equals("ok")){
+            printToast(returnMessage, Toast.LENGTH_SHORT);
+            return false;
+        }
 
         //TODO: don't do this if card is not valid, maybe show a toast indicating that the move is invalid and return false
         drawingview.playCard(card);
@@ -210,8 +222,18 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         return true;
     }
 
-    private boolean treatCard(Card card){
-        return false;
+    /**
+     * Update the view when cards have been played by other players
+     */
+    public void updateView(){
+        System.out.println("ok j'update la view");
+        this.cardDeck = this.gameLogic.getDeck(); // retrieve the new deck
+        this.myCards = this.cardDeck.listToCardsList(this.playersCards.get(this.playerId)); // retrieve my cards
+        // update other players' cards
+
+        drawingview = findViewById(R.id.drawingview);
+        drawingview.playCard(this.cardDeck.peekTopCard());
+        drawingview.invalidate();
     }
 
     /**
@@ -226,6 +248,15 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         else if(this.gameLogic.getPlayersStates().get(this.playerId) == this.gameLogic.DEAD){
             setTitle("You are dead");
         }
+    }
+
+    /**
+     * Print Toast
+     * @param message: the message
+     * @param duration: message's duration
+     */
+    private void printToast(String message, int duration){
+        Toast.makeText(getApplicationContext(),message,duration).show();
     }
 
 

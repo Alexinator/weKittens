@@ -5,10 +5,13 @@ import java.util.List;
 
 import edu.vub.at.wekittens.Card;
 import edu.vub.at.wekittens.Deck;
+import edu.vub.at.wekittens.interfaces.ATWeKittens;
 
 public class GameLogic {
 
         public static GameLogic INSTANCE = null;
+        private ATWeKittens atws = LobbyActivity.atws;
+        private MainActivity mainActivity = null;
 
         public static int TOTAL_HAND_CARDS = 8; //maximum 8 cards per hand
         public static int ALIVE = 1; // player is alive
@@ -16,10 +19,10 @@ public class GameLogic {
         public static int PLAY = 3; // player's time to play
         public static int WAIT = 4; // player must wait
 
-        private static Deck deck;
+        private Deck deck;
         private int playerId;
         private static int nbPlayers;
-        private static int roundNb;
+        private int roundNb;
         private List<List<Integer>> playersCards;
         private List<Integer> playersStates;
 
@@ -80,26 +83,35 @@ public class GameLogic {
         }
 
         /**
+         * Tell if the player can play this round
+         * @return a boolean
+         */
+        public boolean canPlay(){
+                return this.playersStates.get(this.playerId) == PLAY;
+        }
+
+        /**
          * Play a card
          * @param card the card to play
          * @param from the source player id
          * @param to the destination player id
          */
         public String playCard(Card card, int from, int to){
+                System.out.println("Sending "+card.getId()+ " "+from+" "+to);
+                this.atws.sendTuple(card.getId(),from,to, this.getRoundNb());
                 if(this.playersStates.get(from) == WAIT){
                         return "This is not your turn !";
                 }
                 else if(this.playersStates.get(from) == DEAD){
                         return "You are dead !";
                 }
-                else{ // alive and his turn, treat the card
+                else { // alive and his turn, treat the card
                         return stealCard(); //
                 }
-
         }
 
         private String stealCard(){
-
+                setRoundNb(getRoundNb()+1); // update the round number
                 return "ok";
         }
 
@@ -109,9 +121,24 @@ public class GameLogic {
          * @param from the emitter
          * @param to the receiver
          */
-        public void handleTuple(int cardId, int from, int to){
+        public void handleTuple(int cardId, int from, int to, int roundNb){
+                if(mainActivity == null){ // if MainActivity instance is null, retrieve it
+                        this.mainActivity = MainActivity.INSTANCE;
+                }
                 System.out.println("HANDLING TUPLE "+this.playerId);
                 System.out.println("cardid: "+cardId + "from "+  from + "to "+ to);
+                setRoundNb(roundNb); // update the round number in the game logic too
+                addCardToDeck(cardId);
+                this.mainActivity.updateView();
+        }
+
+        /**
+         * Add a received card to the deck
+         * @param cardId the card id that has been received
+         */
+        private void addCardToDeck(int cardId){
+                this.deck.addCardToDeck(cardId);
+
         }
 
         /**
@@ -124,12 +151,12 @@ public class GameLogic {
         /**
          * Generated getters and setters
          */
-        public static Deck getDeck() {
-                return deck;
+        public Deck getDeck() {
+                return this.deck;
         }
 
-        public static List<Integer> getDeckList(){
-                return deck.deckToList();
+        public List<Integer> getDeckList(){
+                return this.deck.deckToList();
         }
 
         public void setDeck(Deck deck) {
@@ -152,8 +179,8 @@ public class GameLogic {
                 this.nbPlayers = nbPlayers;
         }
 
-        public static  int getRoundNb() {
-                return roundNb;
+        public int getRoundNb() {
+                return this.roundNb;
         }
 
         public void setRoundNb(int roundNb) {

@@ -37,6 +37,7 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
     private static final int _ASSET_INSTALLER_ = 0;
     // static so we can easily use it in MainActivity (TODO change)
     public static ATWeKittens atws;
+
     private ArrayList<String> players;
     private ListView listView;
     private ArrayAdapter<String> adapter;
@@ -47,7 +48,7 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_lobby);
-        // first create iat
+        // first start AT
         if (iat == null) {
             Intent i = new Intent(this, WeKittensAssetInstaller.class);
             //Bundle bundle = new Bundle();
@@ -55,6 +56,7 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
             //i.putExtras(bundle);
             startActivityForResult(i, _ASSET_INSTALLER_);
         }
+
         players = new ArrayList<>();
         listView = (ListView)findViewById(R.id.players);
         adapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, players);
@@ -98,17 +100,7 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
         adapter.notifyDataSetChanged();
         TextView tv = (TextView)findViewById(R.id.textView2);
         tv.setText("Lobby - "+adapter.getCount()+" player(s)");
-        atws.addNewPlayer(playerName);
-    }
-
-
-    /**
-     * Print Toast
-     * @param message: the message
-     * @param duration: message's duration
-     */
-    private void printToast(String message, int duration){
-        Toast.makeText(getApplicationContext(),message,duration).show();
+        this.atws.addNewPlayer(playerName);
     }
 
     /**
@@ -133,6 +125,16 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
                 }
             }
         });
+    }
+
+
+    /**
+     * Print Toast
+     * @param message: the message
+     * @param duration: message's duration
+     */
+    private void printToast(String message, int duration){
+        Toast.makeText(getApplicationContext(),message,duration).show();
     }
 
     /**
@@ -171,6 +173,7 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
         intent.putExtra("bundle",bundle);
         startActivity(intent);
     }
+
 
     // ############
     // ##   AT   ##
@@ -237,6 +240,7 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
         }
     }
 
+
     // ############
     // ## Tuples ##
     // ############
@@ -251,8 +255,13 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
      * @param to the receiver
      */
     @Override
-    public void handleTuple(int cardId, int from, int to){
-        GameLogic.INSTANCE.handleTuple(cardId,from,to);
+    public void handleTuple(int cardId, int from, int to, int roundNb){
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                GameLogic.INSTANCE.handleTuple(cardId,from,to,roundNb);
+            }
+        });
     }
 
 }

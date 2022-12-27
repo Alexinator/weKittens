@@ -73,6 +73,23 @@ public class Deck {
         return toReturn;
     }
 
+    /**
+     * Return a cart from a card id
+     * @param cardId the card id
+     * @return a card object
+     */
+    public Card idToCard(int cardId){
+        return new Card(mapIdToType.get(cardId), mapIdToVariant.get(cardId),cardId);
+    }
+
+    /**
+     * Add a card played by a player to the deck
+     * @param cardId the card id that is played
+     */
+    public void addCardToDeck(int cardId){
+        this.cards.addLast(idToCard(cardId));
+    }
+
     public Card peekTopCard() {
         final Iterator<Card> itr = cards.iterator();
         Card lastElement = itr.next();

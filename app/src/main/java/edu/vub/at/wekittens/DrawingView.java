@@ -103,4 +103,14 @@ public class DrawingView extends View {
 
         canvas.drawBitmap(bmResult, x-w, y-h, null);
     }
+
+    // added method
+
+    /**
+     * Get the card played by the player
+     * @return the played card
+     */
+    public Card getTopCard(){
+        return this.topCard;
+    }
 }
