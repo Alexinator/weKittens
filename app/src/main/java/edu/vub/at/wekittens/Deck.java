@@ -185,6 +185,52 @@ public class Deck {
     }
 
     /**
+     * Shuffle the cards in the deck
+     */
+    public void shuffleDeck(){
+        Collections.shuffle(this.cards);
+    }
+
+    /**
+     * Update the cards from the deck
+     * @param cards the new list of cards
+     */
+    public void setCards(LinkedList<Card> cards){
+        this.cards = cards;
+    }
+
+    /**
+     * Return the 3 first cards (for future card)
+     * @return a string containing the 3 first cards
+     */
+    public String get3FirstCards(){
+        Card third = null;
+        Card second = null;
+        Card first = null;
+        final Iterator<Card> itr = cards.iterator();
+        Card lastElement = itr.next();
+        while(itr.hasNext()) {
+            third = second;
+            second = first;
+            first = lastElement;
+            lastElement = itr.next();
+        }
+        String str = "";
+        if (first != null){
+            str = "1: "+first.getType().toString();
+            if(second != null){
+                str += "\n2: " + second.getType().toString();
+                if(third != null){
+                    str += "\n3: "+third.getType().toString();
+                }
+            }
+        } else{
+            return "No more cards in the deck !";
+        }
+        return str;
+    }
+
+    /**
      * Prepare the map to easily retrieve the card variant from id
      */
     private void prepareMaps(){

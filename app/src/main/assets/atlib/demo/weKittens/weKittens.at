@@ -56,8 +56,8 @@ def makeWeKittens() {
         waitForTuples();
     };
 
-    def sendTuple(cardId, from, to, currentRound){
-        def t := tuple: ["Message", cardId, from, to, currentRound];
+    def sendTuple(cardId, from, to, currentRound, deck){
+        def t := tuple: ["Message", cardId, from, to, currentRound, deck];
         log(t);
         tuples.inject: t; // inject public tuple
     };
@@ -65,14 +65,14 @@ def makeWeKittens() {
 
     // wait for tuples to be received
   def waitForTuples(){
-        def tu := tuple: ["Message", var: `cardId, var: `from, var: `to, var:`round];
+        def tu := tuple: ["Message", var: `cardId, var: `from, var: `to, var: `round, var: `deck];
         def waitForIncomings := tuples.whenever: tu read:{ // non blocking reading
             log("currentRound: "+currentRound);
             log("round: "+round);
             if: ((from != playerId)) then: { // do nothing if we read our own tuple and
                 if: (round != currentRound) then: { //we do not read an old tuple
                     currentRound := round;
-                    gui.handleTuple(cardId, from, to, round);
+                    gui.handleTuple(cardId, from, to, round, deck);
                 };
             } else:{
                 currentRound := round;

@@ -56,6 +56,7 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         Boolean hasStartedTheGame = (Boolean) bundle.getBoolean("hasStartedTheGame");
         this.playerCount = players.size();
         this.gameLogic = GameLogic.INSTANCE;
+        this.gameLogic.mainActivityIsReady(this);
 
         this.playersCards = gameLogic.getPlayersCards(); // get players cards
         this.cardDeck = gameLogic.getDeck(); // retrieve the deck
@@ -296,7 +297,7 @@ public class MainActivity extends AppCompatActivity implements HandAction {
      * @param message: the message
      * @param duration: message's duration
      */
-    private void printToast(String message, int duration){
+    public void printToast(String message, int duration){
         Toast.makeText(getApplicationContext(),message,duration).show();
     }
 

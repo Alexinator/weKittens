@@ -1,6 +1,9 @@
 package edu.vub.at.wekittens;
 
+import android.widget.Toast;
+
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import edu.vub.at.wekittens.Card;
@@ -59,6 +62,10 @@ public class GameLogic {
                 INSTANCE = this; // make the GameLogic class callable everywhere
         }
 
+        public void mainActivityIsReady(MainActivity mainActivity){
+                this.mainActivity = mainActivity;
+        }
+
         /**
          * Create hands for each player and prepare the deck for the game
          */
@@ -66,10 +73,20 @@ public class GameLogic {
                 this.playersCards = new ArrayList<>(nbPlayers); // create a list to save cards
                 for(int i = 0; i < nbPlayers; i++){
                         this.playersCards.add(new ArrayList<>(TOTAL_HAND_CARDS)); // for each player, initialise his cards list
-                        for(int j = 0; j < TOTAL_HAND_CARDS-1; j++){
-                                this.playersCards.get(i).add(this.deck.drawCard().getId()); // add a random card to player's cards
-                        }
-                        this.playersCards.get(i).add(this.deck.takeCard(Card.CardType.defuse).getId()); // add a defuse card (rules)
+                        //TODO debug
+                        //for(int j = 0; j < TOTAL_HAND_CARDS-1; j++){
+                        //        this.playersCards.get(i).add(this.deck.drawCard().getId()); // add a random card to player's cards
+                        //}
+                        //this.playersCards.get(i).add(this.deck.takeCard(Card.CardType.defuse).getId()); // add a defuse card (rules)
+                        this.playersCards.get(i).add(0); // nope
+                        this.playersCards.get(i).add(1); // attack
+                        this.playersCards.get(i).add(3); // defuse
+                        this.playersCards.get(i).add(6); // cat
+                        this.playersCards.get(i).add(11); // future
+                        this.playersCards.get(i).add(16); // favor
+                        this.playersCards.get(i).add(17); // skip
+                        this.playersCards.get(i).add(20); // shuffle
+
                         // in total 8 cards have been added to his hand
                 }
                 this.deck.addExplodingKittens(); // add exploding kittens based on the number of players (rules)
@@ -98,7 +115,6 @@ public class GameLogic {
          */
         public String playCard(Card card, int from, int to){
                 System.out.println("Sending "+card.getId()+ " "+from+" "+to);
-                this.atws.sendTuple(card.getId(),from,to, this.getRoundNb());
                 if(this.playersStates.get(from) == WAIT){
                         return "This is not your turn !";
                 }
@@ -106,12 +122,38 @@ public class GameLogic {
                         return "You are dead !";
                 }
                 else { // alive and his turn, treat the card
-                        return stealCard(); //
+                        if(card.getType() == Card.CardType.shuffle){
+                                return shuffleCard(card, from, to);
+                        }
+                        else if(card.getType() == Card.CardType.future){
+                                return futureCard(card,from,to);
+                        }
+                        return stealCard(card, from, to); //
                 }
         }
 
-        private String stealCard(){
+        private String stealCard(Card card, int from, int to){
                 setRoundNb(getRoundNb()+1); // update the round number
+                this.atws.sendTuple(card.getId(),from,to,this.getRoundNb(),null);
+                return "ok";
+        }
+
+        private String shuffleCard(Card card, int from, int to){
+                this.deck.shuffleDeck(); // first shuffle the deck
+                this.deck.addCardToDeck(card.getId()); // then add the card
+                setRoundNb(getRoundNb()+1); // update the round number
+                this.atws.sendTuple(card.getId(),from,to,this.getRoundNb(),this.getDeck().deckToList());
+                printToast("The deck has been shuffled !",Toast.LENGTH_SHORT);
+                //TODO j'ai eu un crash lors de shuffle (?)
+                return "ok";
+        }
+
+        private String futureCard(Card card, int from, int to){
+                String str = this.deck.get3FirstCards();
+                System.out.println(str);
+                printToast(str,Toast.LENGTH_LONG);
+                this.atws.sendTuple(card.getId(),from,to,this.getRoundNb(),null);
+                //TODO faire en sorte que les autres tels soient au courant de la carte (message joueur a prédit le futur)
                 return "ok";
         }
 
@@ -121,15 +163,31 @@ public class GameLogic {
          * @param from the emitter
          * @param to the receiver
          */
-        public void handleTuple(int cardId, int from, int to, int roundNb){
-                if(mainActivity == null){ // if MainActivity instance is null, retrieve it
-                        this.mainActivity = MainActivity.INSTANCE;
-                }
+        public void handleTuple(int cardId, int from, int to, int roundNb, List<Integer> deck){
                 System.out.println("HANDLING TUPLE "+this.playerId);
                 System.out.println("cardid: "+cardId + "from "+  from + "to "+ to);
                 setRoundNb(roundNb); // update the round number in the game logic too
-                addCardToDeck(cardId);
+                Card cardPlayed = this.deck.idToCard(cardId);
+                if(cardPlayed.getType() == Card.CardType.shuffle){
+                        printToast("Player "+from+" has shuffled the deck !",Toast.LENGTH_SHORT);
+                        handleShuffle(deck);
+                }
+                else if(cardPlayed.getType() == Card.CardType.future){
+                        printToast("Player "+from+" has seen the future !", Toast.LENGTH_SHORT);
+                }
                 this.mainActivity.updateView();
+        }
+
+        /**
+         * Handle shuffle card from another player
+         * @param deck the shuffled deck
+         */
+        private void handleShuffle(List<Integer> deck){
+                this.deck.setCards(this.deck.listToCards(deck));
+        }
+
+        private void printToast(String message, int duration){
+                this.mainActivity.printToast(message, duration);
         }
 
         /**

@@ -255,11 +255,11 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
      * @param to the receiver
      */
     @Override
-    public void handleTuple(int cardId, int from, int to, int roundNb){
+    public void handleTuple(int cardId, int from, int to, int roundNb, List<Integer> deck){
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                GameLogic.INSTANCE.handleTuple(cardId,from,to,roundNb);
+                GameLogic.INSTANCE.handleTuple(cardId,from,to,roundNb,deck);
             }
         });
     }

@@ -1,5 +1,7 @@
 package edu.vub.at.wekittens.interfaces;
 
+import java.util.List;
+
 import edu.vub.at.objects.coercion.Async;
 
 public interface ATWeKittens {
@@ -20,7 +22,7 @@ public interface ATWeKittens {
     //start the game when one of the player has pressed the start game button
 
     @Async
-    void sendTuple(int cardId, int from, int to, int roundNb);
+    void sendTuple(int cardId, int from, int to, int roundNb, List<Integer> deck);
 
 
 }
