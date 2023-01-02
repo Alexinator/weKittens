@@ -87,6 +87,11 @@ public class CardViewAdapter extends RecyclerView.Adapter<CardViewAdapter.ViewHo
         notifyItemInserted(position);
     }
 
+    public void resetCards(List<Card> cards){
+        mCards = cards;
+        notifyDataSetChanged();
+    }
+
 
 }
 

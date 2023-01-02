@@ -29,7 +29,7 @@ public class MainActivity extends AppCompatActivity implements HandAction {
     private DrawingView drawingview;
     private Deck cardDeck;
     private TextView txtExplosion;
-    private Button btnPlayerTop, btnPlayerLeft, btnPlayerRight;
+    private Button btnPlayerTop, btnPlayerLeft, btnPlayerRight, skipButton;
     private Animation animExplosionTop, animExplosionBottom, animExplosionLeft, animExplosionRight;
 
     // added attributes
@@ -42,7 +42,6 @@ public class MainActivity extends AppCompatActivity implements HandAction {
     private int leftPlayer = -1;
     private int topPlayer = -1;
     private int rightPlayer = -1;
-
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -123,7 +122,7 @@ public class MainActivity extends AppCompatActivity implements HandAction {
                 drawingview.setRightPlayerCount(this.playersCards.get(1).size());
             }
         }
-        else{
+        else{ // 4 players
             if(this.playerId == 0){
                 this.leftPlayer = 1;
                 this.topPlayer = 2;
@@ -178,12 +177,14 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         btnPlayerTop   = findViewById(R.id.btnPlayerTop);
         btnPlayerLeft  = findViewById(R.id.btnPlayerLeft);
         btnPlayerRight = findViewById(R.id.btnPlayerRight);
+        skipButton = findViewById(R.id.skip_button); // skip button
 
 
         // TODO: currently clicking on a player stack shows the explosion (boom) animation, but it should beh changed to be shown whenever a player dies
         btnPlayerTop.setOnClickListener(v -> { startExplosionAnimation(animExplosionTop); });
         btnPlayerLeft.setOnClickListener(v -> { startExplosionAnimation(animExplosionLeft); });
         btnPlayerRight.setOnClickListener(v -> { startExplosionAnimation(animExplosionRight); });
+        skipButton.setOnClickListener(v -> {skipButtonPressed();});
 
 
         // TODO: do this when a round has started
@@ -270,12 +271,79 @@ public class MainActivity extends AppCompatActivity implements HandAction {
     public void updateView(){
         System.out.println("ok j'update la view");
         this.cardDeck = this.gameLogic.getDeck(); // retrieve the new deck
-        this.myCards = this.cardDeck.listToCardsList(this.playersCards.get(this.playerId)); // retrieve my cards
+        //this.myCards = this.cardDeck.listToCardsList(this.playersCards.get(this.playerId)); // retrieve my cards
+        this.playersCards = this.gameLogic.getPlayersCards(); // update players cards
+        this.myCards = this.cardDeck.listToCardsList(this.playersCards.get(this.playerId)); // update player hand cards
+        adapter.resetCards(this.myCards); // reset hand cards on view
+        updateTitle();
         // update other players' cards
 
         drawingview = findViewById(R.id.drawingview);
         drawingview.playCard(this.cardDeck.peekTopCard());
         drawingview.invalidate();
+    }
+
+    /**
+     * Remove a player after a disconnection
+     * @param playId the player's id
+     */
+    public void removePlayer(int playId){
+        if(this.playerId == 0){
+            if(playId == 1){
+                setLeftPlayerCardCount(0);
+                startExplosionAnimation(animExplosionLeft);
+            }
+            else if(playId == 2){
+                setTopPlayerCardCount(0);
+                startExplosionAnimation(animExplosionTop);
+            }
+            else if(playId == 3){
+                setRightPlayerCardCount(0);
+                startExplosionAnimation(animExplosionRight);
+            }
+        }
+        else if(this.playerId == 1){
+            if(playId == 0){
+                setRightPlayerCardCount(0);
+                startExplosionAnimation(animExplosionRight);
+            }
+            else if(playId == 2){
+                setLeftPlayerCardCount(0);
+                startExplosionAnimation(animExplosionLeft);
+            }
+            else if(playId == 3){
+                setTopPlayerCardCount(0);
+                startExplosionAnimation(animExplosionTop);
+            }
+        }
+        else if(this.playerId == 2){
+            if(playId == 0){
+                setTopPlayerCardCount(0);
+                startExplosionAnimation(animExplosionTop);
+            }
+            else if(playId == 1){
+                setRightPlayerCardCount(0);
+                startExplosionAnimation(animExplosionRight);
+            }
+            else if(playId == 3){
+                setLeftPlayerCardCount(0);
+                startExplosionAnimation(animExplosionLeft);
+            }
+        }
+        else if(this.playerId == 3){
+            if(playId == 0){
+                setLeftPlayerCardCount(0);
+                startExplosionAnimation(animExplosionLeft);
+            }
+            else if(playId == 1){
+                setTopPlayerCardCount(0);
+                startExplosionAnimation(animExplosionTop);
+            }
+            else if(playId == 2){
+                setRightPlayerCardCount(0);
+                startExplosionAnimation(animExplosionRight);
+            }
+        }
     }
 
     /**
@@ -290,6 +358,13 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         else if(this.gameLogic.getPlayersStates().get(this.playerId) == this.gameLogic.DEAD){
             setTitle("You are dead");
         }
+    }
+
+    /**
+     * Skip button has been pressed by the player, end of his turn
+     */
+    private void skipButtonPressed(){
+        this.gameLogic.endPlayerTurn();
     }
 
     /**

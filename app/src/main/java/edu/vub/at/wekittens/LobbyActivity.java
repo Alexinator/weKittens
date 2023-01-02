@@ -22,6 +22,7 @@ import android.widget.Toast;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 
 import edu.vub.at.IAT;
@@ -150,12 +151,12 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
      * Start the game when one of the player has pressed the start button
      */
     @Override
-    public void startGameAT(int playerId, List<Integer> deck, List<List<Integer>> playersCards,List<Integer> playersStates, int nbPlayers){
+    public void startGameAT(int playerId, List<Integer> deck, List<List<Integer>> playersCards,List<Integer> playersStates, int nbPlayers, List<Integer> playersIdsList){
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 //printToast("NEW GAME STARTED",Toast.LENGTH_LONG);
-                new GameLogic(playerId, deck, playersCards, playersStates, nbPlayers); // create the GameLogic object
+                GameLogic logic = new GameLogic(playerId, deck, playersCards, playersStates, nbPlayers, playersIdsList); // create the GameLogic object
                 changeActivity();
             }
         });
@@ -255,11 +256,31 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
      * @param to the receiver
      */
     @Override
-    public void handleTuple(int cardId, int from, int to, int roundNb, List<Integer> deck){
+    public void handleTuple(int cardId, int from, int to, int roundNb, List<Integer> deck, List<Integer> states){
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                GameLogic.INSTANCE.handleTuple(cardId,from,to,roundNb,deck);
+                GameLogic.INSTANCE.handleTuple(cardId,from,to,roundNb,deck,states);
+            }
+        });
+    }
+
+    @Override
+    public void playerDisconnected(int playerId){
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                GameLogic.INSTANCE.playerDisconnected(playerId);
+            }
+        });
+    }
+
+    @Override
+    public void removePlayerFromGame(int playerId){
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                GameLogic.INSTANCE.removePlayer(playerId);
             }
         });
     }

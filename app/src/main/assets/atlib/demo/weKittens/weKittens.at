@@ -8,9 +8,10 @@ def log(text) {
 
 deftype remotePlayer;
 
-def makeWeKittens() {
+def makeWeKittens(myUserId := /.at.support.util.randomNumberBetween(0,125)) {
 
   def otherPlayers := [];// stores remote players.
+  def otherPlayersIds := []; // stores other players ids
   def playerName := "EMPTY PLAYER NAME";
   def playerId;
 
@@ -40,24 +41,25 @@ def makeWeKittens() {
     def startGame(){
         playerId := 0;
         currentRound := -1;
-        game := jlobby.edu.vub.at.wekittens.GameLogic.new(playerId, otherPlayers.length+1);
+        game := jlobby.edu.vub.at.wekittens.GameLogic.new(playerId, otherPlayers.length+1, myUserId, otherPlayersIds);
         def deck := game.getDeckList();
         def playersCards := game.getPlayersCards();
         def playersStates := game.getPlayersStates();
         def nbPlayers := game.getNbPlayers();
+        def playerIdsList := game.getListPlayerdsIds();
         // start the tuple space if game starter
         tuples := makeTupleSpace();
         def otherPlayerId := 0;
         otherPlayers.each:{ |player|
             otherPlayerId := otherPlayerId + 1;
-            player<-startGame(otherPlayerId, deck, playersCards, playersStates, nbPlayers); // send needed information to players
+            player<-startGame(otherPlayerId, deck, playersCards, playersStates, nbPlayers, playerIdsList); // send needed information to players
         };
         tuples.goOnline(); // tuples go online
         waitForTuples();
     };
 
-    def sendTuple(cardId, from, to, currentRound, deck){
-        def t := tuple: ["Message", cardId, from, to, currentRound, deck];
+    def sendTuple(cardId, from, to, currentRound, deck, states){
+        def t := tuple: ["Message", cardId, from, to, currentRound, deck, states];
         log(t);
         tuples.inject: t; // inject public tuple
     };
@@ -65,14 +67,14 @@ def makeWeKittens() {
 
     // wait for tuples to be received
   def waitForTuples(){
-        def tu := tuple: ["Message", var: `cardId, var: `from, var: `to, var: `round, var: `deck];
+        def tu := tuple: ["Message", var: `cardId, var: `from, var: `to, var: `round, var: `deck, var: `states];
         def waitForIncomings := tuples.whenever: tu read:{ // non blocking reading
             log("currentRound: "+currentRound);
             log("round: "+round);
             if: ((from != playerId)) then: { // do nothing if we read our own tuple and
                 if: (round != currentRound) then: { //we do not read an old tuple
                     currentRound := round;
-                    gui.handleTuple(cardId, from, to, round, deck);
+                    gui.handleTuple(cardId, from, to, round, deck, states);
                 };
             } else:{
                 currentRound := round;
@@ -88,12 +90,16 @@ def makeWeKittens() {
         playerName;
     };
 
-    def startGame(id,deck,playersCards,playerStates,nbPlayers){
+    def getMyUserId(){
+        myUserId;
+    };
+
+    def startGame(id,deck,playersCards,playerStates,nbPlayers,playerIdsList){
         tuples := makeTupleSpace();
         tuples.goOnline();
         playerId := id;
         currentRound := -1;
-        gui.startGameAT(id,deck,playersCards,playerStates,nbPlayers);
+        gui.startGameAT(id,deck,playersCards,playerStates,nbPlayers,playerIdsList);
         waitForTuples();
     };
 
@@ -111,12 +117,36 @@ def makeWeKittens() {
   	whenever: remotePlayer discovered: { |player| //when a new player is discovered
   	    if: !otherPlayers.contains(player) then: { //if new player
   	        log("New player found: " + player);
-  	        otherPlayers := otherPlayers + [player];
             when: player<-getPlayerName()@FutureMessage becomes:{|name| //wait to retrieve player's name
-                gui.foundNewPlayer(name);
-            }
+                when: player<-getMyUserId()@FutureMessage becomes:{|id|
+  	                otherPlayers := otherPlayers + [player]; // when we have the player
+                    otherPlayersIds := otherPlayersIds + [id]; // save their ids
+                    gui.foundNewPlayer(name); // only when we have the far reference + id call the gui (to keep list order)
+                    // TODO OK juste trop de deco / reco wifi pourri
+                    //whenever: player disconnected: {
+                    //    if: (id != myUserId) then: {
+                    //        log("Player "+ id + " disconnected !");
+                    //        gui.playerDisconnected(id);
+                    //        when: player<-getMyUserId()@Due(30.seconds) becomes: {|i| // player has 30 seconds to come back
+                    //            log("Player "+i+" is back !");
+                    //        } catch: TimeoutException using:{ |e|
+                    //            log("Player "+id+" will never come back, removing him from game");
+                    //            gui.removePlayerFromGame(id);
+                    //        };
+                    //    };
+                    //};
+
+                    whenever: player reconnected: {
+                        if: (id != myUserId) then: {
+                            log("Reconnected player "+id);
+                        };
+                    };
+                };
+            };
   	    };
   	};
+
+
   	export: remoteInterface as: remotePlayer; //export ATInterface object
   };
 
