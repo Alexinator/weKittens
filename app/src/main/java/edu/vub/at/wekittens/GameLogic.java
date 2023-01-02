@@ -193,6 +193,7 @@ public class GameLogic {
                 else if(from == to){ // player drawn a card
                         System.out.println("Player "+from+" drawn a card !");
                         this.playersCards.get(from).add(cardId);
+                        this.deck.drawCard(); // draw a card from the deck (for player that drawn it)
                 }
                 else{
                         Card cardPlayed = this.deck.idToCard(cardId);
@@ -352,6 +353,7 @@ public class GameLogic {
                 this.playersStates.set(nextPlayer, PLAY);
                 sendTuple(NEXTTURN, this.playerId, nextPlayer, null, this.playersStates);
                 this.mainActivity.updateView();
+                // TODO bug: update de la pile déconne lors d'un skip
         }
 
         /**

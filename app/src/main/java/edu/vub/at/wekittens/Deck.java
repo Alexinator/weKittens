@@ -90,6 +90,10 @@ public class Deck {
         this.cards.addLast(idToCard(cardId));
     }
 
+    /**
+     * Return last element of linkedlist
+     * @return the last element of the linkedlist
+     */
     public Card peekTopCard() {
         final Iterator<Card> itr = cards.iterator();
         Card lastElement = itr.next();

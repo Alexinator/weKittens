@@ -42,6 +42,9 @@ public class MainActivity extends AppCompatActivity implements HandAction {
     private int leftPlayer = -1;
     private int topPlayer = -1;
     private int rightPlayer = -1;
+    private boolean favorCardUsed = false;
+
+    private Card lastCard;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -181,9 +184,9 @@ public class MainActivity extends AppCompatActivity implements HandAction {
 
 
         // TODO: currently clicking on a player stack shows the explosion (boom) animation, but it should beh changed to be shown whenever a player dies
-        btnPlayerTop.setOnClickListener(v -> { startExplosionAnimation(animExplosionTop); });
-        btnPlayerLeft.setOnClickListener(v -> { startExplosionAnimation(animExplosionLeft); });
-        btnPlayerRight.setOnClickListener(v -> { startExplosionAnimation(animExplosionRight); });
+        btnPlayerTop.setOnClickListener(v -> { actionOnPlayer(this.topPlayer); });
+        btnPlayerLeft.setOnClickListener(v -> { actionOnPlayer(this.leftPlayer);});
+        btnPlayerRight.setOnClickListener(v -> { actionOnPlayer(this.rightPlayer); });
         skipButton.setOnClickListener(v -> {skipButtonPressed();});
 
 
@@ -250,19 +253,43 @@ public class MainActivity extends AppCompatActivity implements HandAction {
     @Override
     public boolean cardPlayed(Card card) {
         System.out.println("OK PRINT CARD CALLED");
-        //boolean canPlayThisCard =
-        String returnMessage = this.gameLogic.playCard(card,this.playerId, 1); //TODO hardcoded
-        System.out.println("return message: "+returnMessage);
-        System.out.println(returnMessage.equals("ok"));
-        if(!returnMessage.equals("ok")){
-            printToast(returnMessage, Toast.LENGTH_SHORT);
+
+        if(favorCardUsed){
+            printToast("You have to choose a player from last card before playing another one !",Toast.LENGTH_SHORT);
             return false;
         }
+        else if(card.getType() == Card.CardType.favor){
+            favorCardUsed = true; // TODO HANDLE NOT USE ANOTHER CARD DURING THAT TIME
+            printToast("Choose a player to steal !",Toast.LENGTH_LONG);
+        }
+        else if(!favorCardUsed){ // no waiting action from front
+            //boolean canPlayThisCard =
+            String returnMessage = this.gameLogic.playCard(card,this.playerId, 1); //TODO hardcoded
+            System.out.println("return message: "+returnMessage);
+            System.out.println(returnMessage.equals("ok"));
+            if(!returnMessage.equals("ok")){
+                printToast(returnMessage, Toast.LENGTH_SHORT);
+                return false;
+            }
+        }
+
 
         //TODO: don't do this if card is not valid, maybe show a toast indicating that the move is invalid and return false
         drawingview.playCard(card);
         drawingview.invalidate();
+        lastCard = card;
         return true;
+    }
+
+    private void actionOnPlayer(int playId){
+        if(favorCardUsed){ //TODO le reste
+            String returnMessage = this.gameLogic.playCard(lastCard, this.playerId, playId);
+            if(!returnMessage.equals("ok")){
+                // TODO do something
+                return;
+            }
+            favorCardUsed = false; // todo check if we can use on this player
+        }
     }
 
     /**
