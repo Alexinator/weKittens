@@ -17,6 +17,7 @@ import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -397,13 +398,44 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         else if(this.gameLogic.getPlayersStates().get(this.playerId) == this.gameLogic.RESPONSE){
             setTitle("Response...");
         }
+        else if(this.gameLogic.getPlayersStates().get(this.playerId) == this.gameLogic.ATTACKED){
+            setTitle("Attacked !");
+        }
     }
 
     /**
      * Skip button has been pressed by the player, end of his turn
      */
     private void skipButtonPressed(){
-        this.gameLogic.endPlayerTurn();
+        if(this.gameLogic.getPlayersStates().get(this.playerId) == this.gameLogic.PLAY){ // normal end of turn
+            this.gameLogic.endPlayerTurn();
+        }
+        else if(this.gameLogic.getPlayersStates().get(this.playerId) == this.gameLogic.ATTACKED){ // draw cards to this player
+            this.gameLogic.drawCardsAfterAttack();
+        }
+        else if(this.gameLogic.getPlayersStates().get(this.playerId) == this.gameLogic.RESPONSE){ // do nothing (no nope, etc...)
+            this.gameLogic.doNothing();
+        }
+        else{
+            printToast("This is not your turn", Toast.LENGTH_SHORT);
+        }
+    }
+
+    /**
+     * Change button name depending on the necessity
+     * @param name the new name
+     */
+    public void changeSkipButtonName(String name){
+        Button button = (Button) findViewById(R.id.skip_button);
+        button.setText(name);
+    }
+
+    public void changeEndGame(int winner){
+        Intent intent = new Intent(this,EndScreen.class);
+        Bundle bundle = new Bundle();
+        bundle.putString("winner",winner+"");
+        intent.putExtra("bundle",bundle);
+        startActivity(intent);
     }
 
     /**

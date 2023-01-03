@@ -58,8 +58,8 @@ def makeWeKittens(myUserId := /.at.support.util.randomNumberBetween(0,125)) {
         waitForTuples();
     };
 
-    def sendTuple(cardId, from, to, round, personal, deck, states, favorCardId, nopeCardId){
-        def t := tuple: ["Message", cardId, from, to, round, personal, deck, states,favorCardId, nopeCardId];
+    def sendTuple(cardId, from, to, round, personal, deck, states, additionalInformation, nopeCardId){
+        def t := tuple: ["Message", cardId, from, to, round, personal, deck, states,additionalInformation, nopeCardId];
         log(t);
         tuples.inject: t; // inject public tuple
     };
@@ -67,14 +67,14 @@ def makeWeKittens(myUserId := /.at.support.util.randomNumberBetween(0,125)) {
 
     // wait for tuples to be received
   def waitForTuples(){
-        def tu := tuple: ["Message", var: `cardId, var: `from, var: `to, var: `round, var: `personal, var: `deck, var: `states, var: `favorCardId, var: `nopeCardId];
+        def tu := tuple: ["Message", var: `cardId, var: `from, var: `to, var: `round, var: `personal, var: `deck, var: `states, var: `additionalInformation, var: `nopeCardId];
         def waitForIncomings := tuples.whenever: tu read:{ // non blocking reading
             log("currentRound: "+currentRound);
             log("round: "+round);
             if: ((from != playerId)) then: { // do nothing if we read our own tuple and
                 if: (round == currentRound+1) then: { //we do not read an old tuple (we read the next one)
                     currentRound := round;
-                    gui.handleTuple(cardId, from, to, round, personal, deck, states, favorCardId, nopeCardId);
+                    gui.handleTuple(cardId, from, to, round, personal, deck, states, additionalInformation, nopeCardId);
                 };
             } else:{
                 currentRound := round;
@@ -123,18 +123,18 @@ def makeWeKittens(myUserId := /.at.support.util.randomNumberBetween(0,125)) {
                     otherPlayersIds := otherPlayersIds + [id]; // save their ids
                     gui.foundNewPlayer(name); // only when we have the far reference + id call the gui (to keep list order)
                     // TODO OK juste trop de deco / reco wifi pourri
-                    //whenever: player disconnected: {
-                    //    if: (id != myUserId) then: {
-                    //        log("Player "+ id + " disconnected !");
-                    //        gui.playerDisconnected(id);
-                    //        when: player<-getMyUserId()@Due(30.seconds) becomes: {|i| // player has 30 seconds to come back
-                    //            log("Player "+i+" is back !");
-                    //        } catch: TimeoutException using:{ |e|
-                    //            log("Player "+id+" will never come back, removing him from game");
-                    //            gui.removePlayerFromGame(id);
-                    //        };
-                    //    };
-                    //};
+                    whenever: player disconnected: {
+                        if: (id != myUserId) then: {
+                            log("Player "+ id + " disconnected !");
+                            gui.playerDisconnected(id);
+                            when: player<-getMyUserId()@Due(1.seconds) becomes: {|i| // player has 30 seconds to come back
+                                log("Player "+i+" is back !");
+                            } catch: TimeoutException using:{ |e|
+                                log("Player "+id+" will never come back, removing him from game");
+                                gui.removePlayerFromGame(id);
+                            };
+                        };
+                    };
 
                     whenever: player reconnected: {
                         if: (id != myUserId) then: {
