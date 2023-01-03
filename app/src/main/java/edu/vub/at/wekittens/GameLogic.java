@@ -34,6 +34,7 @@ public class GameLogic {
         public static int IGNORE = 52; // ignore player card
         public static int ALLPLAYERS = 53; // all players
         public static int WINNER = 54; // we have a winner
+        public static int SPECIALCASEATTACKNOPE = 96; // where we want to nope an attack
         public static int SPECIALCASESKIPNOFIGHT = 97; // simply accept skip without nope
         public static int SPECIALCASESKIP = 98; // accept skip with nope fight
         public static int COUNTERNOPE = 99;
@@ -269,13 +270,22 @@ public class GameLogic {
                 }
                 else {
                         if(lastCardPlayed != null){ // if i respond to a nope to make a yup
-                                removeCardFromPlayerHand(from, card.getId()); // remove nope from hand
-                                this.deck.addCardToDeck(card.getId()); // add card to deck
-                                this.playersStates.set(from, PENDING);
-                                this.playersStates.set(nopeRespondPlayerId, RESPONSE);
-                                sendTuple(lastCardPlayed.getId(),from, nopeRespondPlayerId, false, null, this.playersStates, COUNTERNOPE, card.getId());
-                                lastCardPlayed = null;
-                                nopeRespondPlayerId = -1;
+                                if(lastCardPlayed.getType() == Card.CardType.attack){ // special case for attack
+                                        System.out.println("SPECIAL CASE NOPE ATTACK");
+                                        removeCardFromPlayerHand(from, card.getId()); // remove card from player's hand
+                                        this.deck.addCardToDeck(card.getId()); // add card to deck
+                                        setAllPlayersResponseExceptOnePending(from); // wait for responses
+                                        sendTuple(lastCardPlayed.getId(), from, from, false, null, this.playersStates, SPECIALCASEATTACKNOPE, card.getId());
+                                }
+                                else{
+                                        removeCardFromPlayerHand(from, card.getId()); // remove nope from hand
+                                        this.deck.addCardToDeck(card.getId()); // add card to deck
+                                        this.playersStates.set(from, PENDING);
+                                        this.playersStates.set(nopeRespondPlayerId, RESPONSE);
+                                        sendTuple(lastCardPlayed.getId(),from, nopeRespondPlayerId, false, null, this.playersStates, COUNTERNOPE, card.getId());
+                                        lastCardPlayed = null;
+                                        nopeRespondPlayerId = -1;
+                                }
                         }
                         else{ // if i want to throw a nope
                                 this.deck.addCardToDeck(card.getId()); // add card to deck
@@ -572,13 +582,56 @@ public class GameLogic {
         }
 
         private void handleAttack(int cardId, int from, int to, List<Integer> deck, List<Integer> states, int additionalInformation, int nopeCardId){
-                this.playersStates = states; // update states
-                removeCardFromPlayerHand(from, cardId); // remove card from player
-                this.deck.addCardToDeck(cardId); // add card to deck
-                if(to == this.playerId){
-                        this.mainActivity.changeSkipButtonName("Draw "+additionalInformation+" cards");
-                        cardsToDraw = additionalInformation;
+                if(nopeCardId != -1){ // someone nope me
+                        if(additionalInformation == SPECIALCASEATTACKNOPE){ //i have to check if we want to let the player nope his attack
+                                System.out.println("SPECIALCASEATTACKNOPE");
+                                removeCardFromPlayerHand(from, nopeCardId); // remove cards from hand
+                                this.deck.addCardToDeck(nopeCardId); // add card to deck
+                                this.playersStates = states;
+                                lastCardPlayed = this.deck.idToCard(cardId); // save the card
+                                nopeRespondPlayerId = from; // save the guy
+                                printToast("Player "+from+" wants to nope the attack",Toast.LENGTH_LONG);
+                        }
+                        else if(additionalInformation == COUNTERNOPE){ // i counter nope the player
+                                removeCardFromPlayerHand(from, nopeCardId);
+                                this.deck.addCardToDeck(nopeCardId);
+                                this.playersStates.set(to, RESPONSE);
+                                this.playersStates.set(from, PENDING);
+                                lastCardPlayed = this.deck.idToCard(cardId);
+                                mustRespondToPlayerId = from;
+                        }
+                        else{ // i have been noped
+                                System.out.println("attack: someone nope me !");
+                                this.deck.addCardToDeck(nopeCardId); // add card to deck
+                                removeCardFromPlayerHand(from, nopeCardId); // remove nope from his hand
+                                this.playersStates.set(from, WAIT); // reset to wait
+                                this.playersStates.set(to, PLAY); // i can play to defend (or not) myself
+                                lastCardPlayed = this.deck.idToCard(cardId);
+                                nopeRespondPlayerId = from;
+                        }
                 }
+                else{
+                        if(additionalInformation == 0){ // if i get a skip for another player
+                                System.out.println("GOT A SKIP FROM ANOTHER PLAYER IN ATTACK");
+                                this.playersStates.set(from, WAIT); // go back to wait state
+                                this.playersStates.set(this.playerId, PLAY); // i can normally play
+                                this.cardsToDraw = 0; // reset cards
+                                this.mainActivity.changeSkipButtonName("END"); // reset button's name
+                                this.mainActivity.updateView();
+                        }
+                        else{
+                                System.out.println("normal attack");
+                                lastCardPlayed = this.deck.idToCard(cardId);
+                                this.playersStates = states; // update states
+                                removeCardFromPlayerHand(from, cardId); // remove card from player
+                                this.deck.addCardToDeck(cardId); // add card to deck
+                                if(to == this.playerId){
+                                        this.mainActivity.changeSkipButtonName("Draw "+additionalInformation+" cards");
+                                        cardsToDraw = additionalInformation;
+                                }
+                        }
+                }
+                this.mainActivity.updateView();
         }
 
         private void handleSkip(int cardId, int from, int to, List<Integer> deck, List<Integer> states, int additionalInformation, int nopeCardId){

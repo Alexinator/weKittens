@@ -127,7 +127,7 @@ def makeWeKittens(myUserId := /.at.support.util.randomNumberBetween(0,125)) {
                         if: (id != myUserId) then: {
                             log("Player "+ id + " disconnected !");
                             gui.playerDisconnected(id);
-                            when: player<-getMyUserId()@Due(1.seconds) becomes: {|i| // player has 30 seconds to come back
+                            when: player<-getMyUserId()@Due(30.seconds) becomes: {|i| // player has 30 seconds to come back
                                 log("Player "+i+" is back !");
                             } catch: TimeoutException using:{ |e|
                                 log("Player "+id+" will never come back, removing him from game");
