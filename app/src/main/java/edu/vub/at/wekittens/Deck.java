@@ -186,6 +186,7 @@ public class Deck {
         // the code above is not used in my implementation
         addCard(this.cards, CardType.exploding,"a",playerCount-1, 22);
         Collections.shuffle(this.cards);
+        this.cards.addFirst(new Card(CardType.exploding,"a",22)); //TODO REMOVE DEBUG
     }
 
     /**
