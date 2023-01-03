@@ -22,7 +22,7 @@ public interface ATWeKittens {
     //start the game when one of the player has pressed the start game button
 
     @Async
-    void sendTuple(int cardId, int from, int to, int roundNb, List<Integer> deck, List<Integer> states);
+    void sendTuple(int cardId, int from, int to, int roundNb, boolean personal, List<Integer> deck, List<Integer> states, Integer favorCardId, Integer nopeCardId);
 
 
 }

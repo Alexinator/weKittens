@@ -58,8 +58,8 @@ def makeWeKittens(myUserId := /.at.support.util.randomNumberBetween(0,125)) {
         waitForTuples();
     };
 
-    def sendTuple(cardId, from, to, currentRound, deck, states){
-        def t := tuple: ["Message", cardId, from, to, currentRound, deck, states];
+    def sendTuple(cardId, from, to, round, personal, deck, states, favorCardId, nopeCardId){
+        def t := tuple: ["Message", cardId, from, to, round, personal, deck, states,favorCardId, nopeCardId];
         log(t);
         tuples.inject: t; // inject public tuple
     };
@@ -67,14 +67,14 @@ def makeWeKittens(myUserId := /.at.support.util.randomNumberBetween(0,125)) {
 
     // wait for tuples to be received
   def waitForTuples(){
-        def tu := tuple: ["Message", var: `cardId, var: `from, var: `to, var: `round, var: `deck, var: `states];
+        def tu := tuple: ["Message", var: `cardId, var: `from, var: `to, var: `round, var: `personal, var: `deck, var: `states, var: `favorCardId, var: `nopeCardId];
         def waitForIncomings := tuples.whenever: tu read:{ // non blocking reading
             log("currentRound: "+currentRound);
             log("round: "+round);
             if: ((from != playerId)) then: { // do nothing if we read our own tuple and
-                if: (round != currentRound) then: { //we do not read an old tuple
+                if: (round == currentRound+1) then: { //we do not read an old tuple (we read the next one)
                     currentRound := round;
-                    gui.handleTuple(cardId, from, to, round, deck, states);
+                    gui.handleTuple(cardId, from, to, round, personal, deck, states, favorCardId, nopeCardId);
                 };
             } else:{
                 currentRound := round;

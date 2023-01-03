@@ -253,8 +253,11 @@ public class MainActivity extends AppCompatActivity implements HandAction {
     @Override
     public boolean cardPlayed(Card card) {
         System.out.println("OK PRINT CARD CALLED");
-
-        if(favorCardUsed){
+        if(!this.gameLogic.canPlay()){
+            printToast("Not your turn", Toast.LENGTH_SHORT);
+            return false;
+        }
+        else if(favorCardUsed){
             printToast("You have to choose a player from last card before playing another one !",Toast.LENGTH_SHORT);
             return false;
         }
@@ -264,9 +267,12 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         }
         else if(!favorCardUsed){ // no waiting action from front
             //boolean canPlayThisCard =
-            String returnMessage = this.gameLogic.playCard(card,this.playerId, 1); //TODO hardcoded
+            String returnMessage = this.gameLogic.playCard(card,this.playerId, this.playerId); //TODO hardcoded
             System.out.println("return message: "+returnMessage);
             System.out.println(returnMessage.equals("ok"));
+            if(returnMessage == "favor"){ // player responded from a favor
+                return true;
+            }
             if(!returnMessage.equals("ok")){
                 printToast(returnMessage, Toast.LENGTH_SHORT);
                 return false;
@@ -285,8 +291,8 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         if(favorCardUsed){ //TODO le reste
             String returnMessage = this.gameLogic.playCard(lastCard, this.playerId, playId);
             if(!returnMessage.equals("ok")){
-                // TODO do something
-                return;
+                printToast(returnMessage,Toast.LENGTH_LONG);
+                return; // player must choose a valid victim
             }
             favorCardUsed = false; // todo check if we can use on this player
         }
@@ -376,7 +382,7 @@ public class MainActivity extends AppCompatActivity implements HandAction {
     /**
      * Update title to let the player know if this is their turn or not
      */
-    private void updateTitle(){
+    public void updateTitle(){
         if (this.gameLogic.getPlayersStates().get(this.playerId) == this.gameLogic.PLAY) {
             setTitle("Your turn");
         } else if(this.gameLogic.getPlayersStates().get(this.playerId) == this.gameLogic.WAIT) {
@@ -384,6 +390,12 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         }
         else if(this.gameLogic.getPlayersStates().get(this.playerId) == this.gameLogic.DEAD){
             setTitle("You are dead");
+        }
+        else if(this.gameLogic.getPlayersStates().get(this.playerId) == this.gameLogic.PENDING){
+            setTitle("Pending...");
+        }
+        else if(this.gameLogic.getPlayersStates().get(this.playerId) == this.gameLogic.RESPONSE){
+            setTitle("Response...");
         }
     }
 
