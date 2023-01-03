@@ -37,6 +37,7 @@ public class GameLogic {
         private List<Integer> listPlayerdsIds; // used for AT passing
 
         private Card lastCardPlayed;
+        private int nopeRespondPlayerId; // if can respond to a nope
         private int mustRespondToPlayerId;
 
         /**
@@ -214,7 +215,18 @@ public class GameLogic {
         }
 
         private String nopeCard(Card card, int from, int to){
-
+                if(lastCardPlayed != null){ // if i respond to a nope to make a yup
+                        removeCardFromPlayerHand(from, card.getId()); // remove nope from hand
+                        this.deck.addCardToDeck(card.getId()); // add card to deck
+                        this.playersStates.set(from, PENDING);
+                        this.playersStates.set(nopeRespondPlayerId, RESPONSE);
+                        sendTuple(lastCardPlayed.getId(),from, nopeRespondPlayerId, false, null, this.playersStates, -1, card.getId());
+                        this.mainActivity.updateView();
+                        return "ok";
+                }
+                else{
+                        return "ok";
+                }
         }
 
         /**
@@ -245,7 +257,7 @@ public class GameLogic {
                                 handleFuture(cardId, from);
                         }
                         else if(cardPlayed.getType() == Card.CardType.favor){
-                                handleFavor(cardId, from, to, states,favorCardId);
+                                handleFavor(cardId, from, to, states,favorCardId, nopeCardId);
                         }
                 }
 
@@ -268,7 +280,7 @@ public class GameLogic {
                 printToast("Player "+from+" has seen the future !", Toast.LENGTH_SHORT); // print message
         }
 
-        private void handleFavor(int cardId, int from, int to, List<Integer> states, Integer favorCardId){
+        private void handleFavor(int cardId, int from, int to, List<Integer> states, Integer favorCardId, Integer nopeCardId){
                 System.out.println("handle favor from: "+from+ " to: "+to);
                 if(this.playersStates.get(to) == PENDING){ // i know that the player was pending for an answer
                         Card receivedCard = this.deck.idToCard(favorCardId);
@@ -276,6 +288,8 @@ public class GameLogic {
                                 this.deck.addCardToDeck(favorCardId);
                                 this.playersStates = states;
                                 removeCardFromPlayerHand(from, favorCardId);
+                                lastCardPlayed = this.deck.idToCard(cardId); // save the card that has been nope
+                                nopeRespondPlayerId = from; // save the guy who send us a nope
                                 printToast("Player "+from+" played a nope !",Toast.LENGTH_SHORT);
                         }
                         else{ // card has been received
@@ -288,7 +302,12 @@ public class GameLogic {
                 }
                 else{
                         mustRespondToPlayerId = from;
-                        this.deck.addCardToDeck(cardId); // add card to deck
+                        if(nopeCardId != -1){ // reponse to a nope noped (yup)
+                                this.deck.addCardToDeck(nopeCardId);
+                        }
+                        else{
+                                this.deck.addCardToDeck(cardId); // add card to deck
+                        }
                         this.playersStates = states; // update states
                         lastCardPlayed = this.deck.idToCard(cardId); // save the card to be send to pending player
                         printToast("Player "+from+" wants a favor from player "+to, Toast.LENGTH_SHORT);
