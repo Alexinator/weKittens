@@ -752,7 +752,7 @@ public class GameLogic {
                                 if(canSurvive == -1){ // player explode
                                         printToast("BOOOM", Toast.LENGTH_SHORT);
                                         this.playersStates.set(this.playerId, DEAD);
-                                        sendTuple(card.getId(), this.playerId, this.playerId, true, this.deck, this.playersStates, -1, -1); // send to all that player is dead
+                                        sendTuple(card.getId(), this.playerId, this.playerId, false, this.deck, this.playersStates, -1, -1); // send to all that player is dead
                                         this.mainActivity.updateView();
                                         return; // stop here
                                 }
