@@ -34,7 +34,8 @@ public class GameLogic {
         public static int IGNORE = 52; // ignore player card
         public static int ALLPLAYERS = 53; // all players
         public static int WINNER = 54; // we have a winner
-        public static int SPECIALCASESKIP = 98;
+        public static int SPECIALCASESKIPNOFIGHT = 97; // simply accept skip without nope
+        public static int SPECIALCASESKIP = 98; // accept skip with nope fight
         public static int COUNTERNOPE = 99;
 
         private Deck deck;
@@ -391,7 +392,7 @@ public class GameLogic {
                                 handleFavor(cardId, from, to, states,additionalInformation, nopeCardId);
                         }
                         else if(cardPlayed.getType() == Card.CardType.attack){
-                                handleAttack(cardId, from, to , additionalInformation, states);
+                                handleAttack(cardId, from, to, deck, states, additionalInformation, nopeCardId);
                         }
                         else if(cardPlayed.getType() == Card.CardType.skip){
                                 handleSkip(cardId, from, to, deck, states, additionalInformation, nopeCardId);
@@ -467,9 +468,15 @@ public class GameLogic {
          */
         public void doNothing(){
                 this.playersStates.set(this.playerId, WAIT); // go back to wait state
-                if((lastCardPlayed.getType() == Card.CardType.skip) && (nopeRespondPlayerId != -1)){ // special case skip attack && i noped before
-                        sendTuple(lastCardPlayed.getId(), this.playerId, mustRespondToPlayerId, false, null, this.playersStates, 0, SPECIALCASESKIP); // tell we do nothing
-                        nopeRespondPlayerId = -1; //reset
+                if((lastCardPlayed.getType() == Card.CardType.skip)){ // special case skip attack && i noped before
+                        if(nopeRespondPlayerId != -1){
+                                sendTuple(lastCardPlayed.getId(), this.playerId, mustRespondToPlayerId, false, null, this.playersStates, 0, SPECIALCASESKIP); // tell we do nothing
+                                nopeRespondPlayerId = -1; //reset
+                        }
+                        else{
+                                sendTuple(lastCardPlayed.getId(), this.playerId, mustRespondToPlayerId, false, null, this.playersStates, SPECIALCASESKIPNOFIGHT, -1); // tell we do nothing
+                        }
+
                 }
                 else{
                         sendTuple(lastCardPlayed.getId(), this.playerId, mustRespondToPlayerId, false, null, this.playersStates, 0, -1); // tell we do nothing
@@ -526,7 +533,7 @@ public class GameLogic {
                 }
 
 
-                this.deck.addCardToDeck(cardId); // add card to deck
+                this.deck.addCardToDeck(cardId); // add card to deck //TODO CHECK COHERENCE
                 removeCardFromPlayerHand(from, cardId); // remove card from hand
         }
 
@@ -564,13 +571,13 @@ public class GameLogic {
                 }
         }
 
-        private void handleAttack(int cardId, int from, int to, int number, List<Integer> states){
+        private void handleAttack(int cardId, int from, int to, List<Integer> deck, List<Integer> states, int additionalInformation, int nopeCardId){
                 this.playersStates = states; // update states
                 removeCardFromPlayerHand(from, cardId); // remove card from player
                 this.deck.addCardToDeck(cardId); // add card to deck
                 if(to == this.playerId){
-                        this.mainActivity.changeSkipButtonName("Draw "+number+" cards");
-                        cardsToDraw = number;
+                        this.mainActivity.changeSkipButtonName("Draw "+additionalInformation+" cards");
+                        cardsToDraw = additionalInformation;
                 }
         }
 
@@ -615,6 +622,16 @@ public class GameLogic {
                                 lastCardPlayed = this.deck.idToCard(cardId);
                                 this.playersStates = states; // update states
                                 printToast("Player "+from+" wants to use skip",Toast.LENGTH_SHORT);
+                        }
+                        else if(additionalInformation == SPECIALCASESKIPNOFIGHT){
+                                System.out.println("SPECIAL CASE SKIP WITHOUT FIGHT");
+                                this.playersStates.set(from, WAIT); // reset to wait
+                                if(to == this.playerId && !stillHaveResponses(this.playerId)){ // if player does not have responses to wait for
+                                        this.playersStates.set(to, PLAY); // i can normally play
+                                        this.cardsToDraw = 0; // reset cards
+                                        this.mainActivity.changeSkipButtonName("SKIP"); // reset button's name
+                                        this.mainActivity.updateView();
+                                }
                         }
                         else if(additionalInformation == 0){ // a player did nothing
                                 this.playersStates.set(from, WAIT); // go back to wait state
