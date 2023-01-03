@@ -246,6 +246,15 @@ public class Deck {
     }
 
     /**
+     * Remove the last card that has been placed on the deck (usually for shuffle)
+     */
+    public void removeLastCardPlacedAndShuffle(){
+        Card card = this.cards.removeLast();
+        shuffleDeck();
+        this.cards.addLast(card);
+    }
+
+    /**
      * Prepare the map to easily retrieve the card variant from id
      */
     private void prepareMaps(){

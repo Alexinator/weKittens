@@ -33,6 +33,7 @@ public class GameLogic {
         public static int IGNORE = 52; // ignore player card
         public static int ALLPLAYERS = 53; // all players
         public static int WINNER = 54; // we have a winner
+        public static int COUNTERNOPE = 99;
 
         private Deck deck;
         private int playerId;
@@ -163,8 +164,13 @@ public class GameLogic {
                         return "Pending for an answer, please wait !";
                 }
                 else if(this.playersStates.get(from) == RESPONSE){ // current player response from a card
-                        System.out.println("favor card response called");
-                        return favorCardResponse(card, from, mustRespondToPlayerId);
+                        if(lastCardPlayed.getType() == Card.CardType.favor){
+                                System.out.println("favor card response called");
+                                return favorCardResponse(card, from, mustRespondToPlayerId);
+                        }
+                        else if(card.getType() == Card.CardType.nope){
+                                return nopeCard(card, from, to);
+                        }
                 }
                 else { // alive and his turn, treat the card
                         removeCardFromPlayerHand(this.playerId, card.getId()); // remove card from player's hand
@@ -192,15 +198,15 @@ public class GameLogic {
                         }
                         return "Error";
                 }
+                return "ok";
         }
 
         private String shuffleCard(Card card, int from, int to){
-                lastCardPlayed = card;
-                //this.deck.shuffleDeck(); // first shuffle the deck
+                lastCardPlayed = card; // keep track of played card
                 this.deck.addCardToDeck(card.getId()); // then add the card
+                removeCardFromPlayerHand(from, card.getId());
                 setAllPlayersResponseExceptOnePending(from); // set all players to RESPONSE and from to PENDING
                 sendTuple(card.getId(), from, to, false, null, this.playersStates,-1, -1);
-                //printToast("The deck has been shuffled !",Toast.LENGTH_SHORT);
                 printToast("Waiting for others' response...",Toast.LENGTH_SHORT);
                 this.mainActivity.updateView();
                 checkVictoryCards();
@@ -208,11 +214,16 @@ public class GameLogic {
         }
 
         private String futureCard(Card card, int from, int to){
-                //lastCardPlayed = card;
-                String str = this.deck.get3FirstCards();
-                System.out.println(str);
-                printToast(str,Toast.LENGTH_LONG);
-                sendTuple(card.getId(), from, to, false, null, null,-1, -1);
+                lastCardPlayed = card;
+                //String str = this.deck.get3FirstCards();
+                //System.out.println(str);
+                //printToast(str,Toast.LENGTH_LONG);
+                //sendTuple(card.getId(), from, to, false, null, null,-1, -1);
+                this.deck.addCardToDeck(card.getId()); // add the card to deck
+                setAllPlayersResponseExceptOnePending(from); // all pending except me
+                sendTuple(card.getId(), from, to, false, null, this.playersStates, -1, -1);
+                printToast("Waiting for others' response...",Toast.LENGTH_SHORT);
+                this.mainActivity.updateView();
                 checkVictoryCards();
                 return "ok";
         }
@@ -241,20 +252,33 @@ public class GameLogic {
         }
 
         private String nopeCard(Card card, int from, int to){
-                if(lastCardPlayed != null){ // if i respond to a nope to make a yup
-                        removeCardFromPlayerHand(from, card.getId()); // remove nope from hand
+                if(this.playersStates.get(from) == RESPONSE){ // if i am responding to a player's card (shuffle, future, ...)
+                        removeCardFromPlayerHand(from, card.getId()); // remove card from hand
                         this.deck.addCardToDeck(card.getId()); // add card to deck
-                        this.playersStates.set(from, PENDING);
-                        this.playersStates.set(nopeRespondPlayerId, RESPONSE);
-                        sendTuple(lastCardPlayed.getId(),from, nopeRespondPlayerId, false, null, this.playersStates, -1, card.getId());
-                        this.mainActivity.updateView();
-                        return "ok";
+                        this.playersStates.set(from, WAIT); // go to WAIT
+                        this.playersStates.set(mustRespondToPlayerId, PLAY); // go to PLAY
+                        sendTuple(lastCardPlayed.getId(), from, mustRespondToPlayerId, false, null, null, -1, card.getId());
+                        lastCardPlayed = null; // reset
+                        mustRespondToPlayerId = -1; // reset
                 }
-                else{ // if i want to throw a nope
-                        this.deck.addCardToDeck(card.getId()); // add card to deck
-                        removeCardFromPlayerHand(from, card.getId()); // remove card from player's hand
-                        return "ok";
+                else {
+                        if(lastCardPlayed != null){ // if i respond to a nope to make a yup
+                                removeCardFromPlayerHand(from, card.getId()); // remove nope from hand
+                                this.deck.addCardToDeck(card.getId()); // add card to deck
+                                this.playersStates.set(from, PENDING);
+                                this.playersStates.set(nopeRespondPlayerId, RESPONSE);
+                                sendTuple(lastCardPlayed.getId(),from, nopeRespondPlayerId, false, null, this.playersStates, COUNTERNOPE, card.getId());
+                                lastCardPlayed = null;
+                                nopeRespondPlayerId = -1;
+                        }
+                        else{ // if i want to throw a nope
+                                this.deck.addCardToDeck(card.getId()); // add card to deck
+                                removeCardFromPlayerHand(from, card.getId()); // remove card from player's hand
+                                sendTuple(card.getId(), from, from, false, null, null, -1, -1);
+                        }
                 }
+                this.mainActivity.updateView();
+                return "ok";
         }
 
         private String attackCard(Card card, int from){
@@ -337,10 +361,10 @@ public class GameLogic {
                 else{
                         Card cardPlayed = this.deck.idToCard(cardId);
                         if(cardPlayed.getType() == Card.CardType.shuffle){
-                                handleShuffle(cardId, from, to, deck, states, additionalInformation);
+                                handleShuffle(cardId, from, to, deck, states, additionalInformation, nopeCardId);
                         }
                         else if(cardPlayed.getType() == Card.CardType.future){
-                                handleFuture(cardId, from);
+                                handleFuture(cardId, from, to, deck, states, additionalInformation, nopeCardId);
                         }
                         else if(cardPlayed.getType() == Card.CardType.favor){
                                 handleFavor(cardId, from, to, states,additionalInformation, nopeCardId);
@@ -357,6 +381,9 @@ public class GameLogic {
                         else if(cardPlayed.getType() == Card.CardType.defuse){
                                 handleDefuse(cardId, from, deck, additionalInformation);
                         }
+                        else if(cardPlayed.getType() == Card.CardType.nope){
+                                handleNope(cardId, from);
+                        }
                 }
                 this.mainActivity.updateView();
         }
@@ -365,24 +392,48 @@ public class GameLogic {
          * Handle shuffle card from another player
          * @param deck the shuffled deck
          */
-        private void handleShuffle(int cardId, int from, int to, List<Integer> deck, List<Integer> states, int additionalInformation){
-                removeCardFromPlayerHand(from, cardId); // remove card from player's hand
-                this.deck.addCardToDeck(cardId); // add card to deck
-                this.mustRespondToPlayerId = from; // we need to know the guy
-                if(additionalInformation == -1){ // if player's waiting to know if he can play his card
-                        this.playersStates = states; // update states
-                        printToast("Player "+from+" wants to shuffle the deck",Toast.LENGTH_SHORT);
-                }
-                else if(additionalInformation == 0){ // a player did nothing
-                        this.playersStates.set(from, WAIT); // go back to wait state
-                        if(!stillHaveResponses(this.playerId)){ // if player still has responses to wait for
-                                this.deck.shuffleDeck();
-
+        private void handleShuffle(int cardId, int from, int to, List<Integer> deck, List<Integer> states, int additionalInformation, int nopeCardId){
+                if(nopeCardId != -1){ // someone nope me
+                        if(additionalInformation == COUNTERNOPE){ // i counter nope the player
+                                removeCardFromPlayerHand(from, nopeCardId);
+                                this.deck.addCardToDeck(nopeCardId);
+                                this.playersStates.set(to, RESPONSE);
+                                this.playersStates.set(from, PENDING);
+                                lastCardPlayed = this.deck.idToCard(cardId);
+                                mustRespondToPlayerId = from;
+                        }
+                        else{ // i have been noped
+                                System.out.println("Shuffle: someone nope me !");
+                                this.deck.addCardToDeck(nopeCardId); // add card to deck
+                                removeCardFromPlayerHand(from, nopeCardId); // remove nope from his hand
+                                this.playersStates.set(from, WAIT); // reset to wait
+                                this.playersStates.set(to, PLAY); // i can play to defend (or not) myself
+                                lastCardPlayed = this.deck.idToCard(cardId);
+                                nopeRespondPlayerId = from;
                         }
                 }
                 else{
-                        this.deck.setCards(this.deck.listToCards(deck)); // he can shuffle the deck
-                        printToast("Player "+from+" has shuffled the deck !",Toast.LENGTH_SHORT);
+                        removeCardFromPlayerHand(from, cardId); // remove card from player's hand
+                        this.deck.addCardToDeck(cardId); // add card to deck
+                        this.mustRespondToPlayerId = from; // we need to know the guy
+                        if(additionalInformation == -1){ // if player's waiting to know if he can play his card
+                                lastCardPlayed = this.deck.idToCard(cardId);
+                                this.playersStates = states; // update states
+                                printToast("Player "+from+" wants to shuffle the deck",Toast.LENGTH_SHORT);
+                        }
+                        else if(additionalInformation == 0){ // a player did nothing
+                                this.playersStates.set(from, WAIT); // go back to wait state
+                                if(to == this.playerId && !stillHaveResponses(this.playerId)){ // if player does not have responses to wait for
+                                        this.playersStates.set(this.playerId, PLAY);
+                                        this.deck.removeLastCardPlacedAndShuffle();
+                                        sendTuple(cardId, this.playerId, this.playerId, false, this.deck, this.playersStates, 2, -1);
+                                        printToast("Player "+this.playerId+" has shuffled the deck !",Toast.LENGTH_SHORT);
+                                }
+                        }
+                        else{ // the deck has been shuffled
+                                this.deck.setCards(this.deck.listToCards(deck)); // he can shuffle the deck
+                                printToast("Player "+from+" has shuffled the deck !",Toast.LENGTH_SHORT);
+                        }
                 }
         }
 
@@ -391,13 +442,13 @@ public class GameLogic {
          */
         public void doNothing(){
                 this.playersStates.set(this.playerId, WAIT); // go back to wait state
+                sendTuple(lastCardPlayed.getId(), this.playerId, mustRespondToPlayerId, false, null, this.playersStates, 0, -1); // tell we do nothing
                 lastCardPlayed = null; // reset
                 mustRespondToPlayerId = -1; // reset
-                sendTuple(lastCardPlayed.getId(), this.playerId, mustRespondToPlayerId, false, null, this.playersStates, 0, -1); // tell we do nothing
                 this.mainActivity.updateView(); // update view
         }
 
-        private void handleFuture(int cardId, int from){
+        private void handleFuture(int cardId, int from, int to, List<Integer> deck, List<Integer> states, int additionalInformation, int nopeCardId){
                 this.deck.addCardToDeck(cardId); // add card to deck
                 removeCardFromPlayerHand(from, cardId); // remove card from hand
                 printToast("Player "+from+" has seen the future !", Toast.LENGTH_SHORT); // print message
@@ -466,6 +517,11 @@ public class GameLogic {
                         this.deck.addCardToDeck(cardId); // add card to deck
                         removeCardFromPlayerHand(from, cardId); // remove cat from player
                 }
+        }
+
+        private void handleNope(int cardId, int from){
+                this.deck.addCardToDeck(cardId);
+                removeCardFromPlayerHand(from, cardId);
         }
 
         /**
