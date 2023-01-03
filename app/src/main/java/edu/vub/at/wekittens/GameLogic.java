@@ -274,7 +274,15 @@ public class GameLogic {
                                         System.out.println("SPECIAL CASE NOPE ATTACK");
                                         removeCardFromPlayerHand(from, card.getId()); // remove card from player's hand
                                         this.deck.addCardToDeck(card.getId()); // add card to deck
-                                        setAllPlayersResponseExceptOnePending(from); // wait for responses
+                                        if(nopeRespondPlayerId == -1){ // if i send the nope to counter attack
+                                                System.out.println("First nope sent");
+                                                setAllPlayersResponseExceptOnePending(from); // wait for responses
+                                        }
+                                        else{ // i respond a nope by a nope, he is still attacked
+                                                System.out.println("Responding to a nope attack");
+                                                this.playersStates.set(mustRespondToPlayerId, ATTACKED);
+                                                this.playersStates.set(this.playerId, WAIT);
+                                        }
                                         sendTuple(lastCardPlayed.getId(), from, from, false, null, this.playersStates, SPECIALCASEATTACKNOPE, card.getId());
                                 }
                                 else{
@@ -588,6 +596,9 @@ public class GameLogic {
                                 removeCardFromPlayerHand(from, nopeCardId); // remove cards from hand
                                 this.deck.addCardToDeck(nopeCardId); // add card to deck
                                 this.playersStates = states;
+                                if(this.playerId == to){ // if i got a nope as a response
+                                        System.out.println("I GOT A NOPE AS RESPONSE");
+                                }
                                 lastCardPlayed = this.deck.idToCard(cardId); // save the card
                                 nopeRespondPlayerId = from; // save the guy
                                 printToast("Player "+from+" wants to nope the attack",Toast.LENGTH_LONG);
@@ -605,7 +616,7 @@ public class GameLogic {
                                 this.deck.addCardToDeck(nopeCardId); // add card to deck
                                 removeCardFromPlayerHand(from, nopeCardId); // remove nope from his hand
                                 this.playersStates.set(from, WAIT); // reset to wait
-                                this.playersStates.set(to, PLAY); // i can play to defend (or not) myself
+                                this.playersStates.set(this.playerId, ATTACKED); // i can play to defend (or not) myself
                                 lastCardPlayed = this.deck.idToCard(cardId);
                                 nopeRespondPlayerId = from;
                         }
@@ -631,6 +642,7 @@ public class GameLogic {
                                 }
                         }
                 }
+                lastCardPlayed = this.deck.idToCard(cardId);
                 this.mainActivity.updateView();
         }
 
