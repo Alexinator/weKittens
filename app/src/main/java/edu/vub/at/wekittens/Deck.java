@@ -213,10 +213,21 @@ public class Deck {
         Card first = null;
         final Iterator<Card> itr = cards.iterator();
         Card lastElement = itr.next();
+        int i = 3;
         while(itr.hasNext()) {
-            third = second;
-            second = first;
-            first = lastElement;
+            if(i == 3){
+                first = lastElement;
+            }
+            else if(i == 2){
+                second = lastElement;
+            }
+            else if(i == 1){
+                third = lastElement;
+            }
+            else{
+                break;
+            }
+            i -= 1;
             lastElement = itr.next();
         }
         String str = "";

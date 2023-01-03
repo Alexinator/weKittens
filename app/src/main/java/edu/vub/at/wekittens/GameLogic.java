@@ -25,6 +25,9 @@ public class GameLogic {
         public static int PENDING = 5; // player is waiting for an answer
         public static int RESPONSE = 6; // player must respond to a card
         public static int NEXTTURN = 50; // player's next turn
+        public static int UPDATE = 51; // update the game state
+        public static int IGNORE = 52; // ignore player card
+        public static int ALLPLAYERS = 53; // all players
 
         private Deck deck;
         private int playerId;
@@ -179,8 +182,11 @@ public class GameLogic {
                 lastCardPlayed = card;
                 this.deck.shuffleDeck(); // first shuffle the deck
                 this.deck.addCardToDeck(card.getId()); // then add the card
-                sendTuple(card.getId(), from, to, false, this.deck, null,-1, -1);
+                //setAllPlayersResponseExceptOnePending(from); // set all players to RESPONSE and from to PENDING
+                sendTuple(card.getId(), from, to, false, this.deck, this.playersStates,-1, -1);
                 printToast("The deck has been shuffled !",Toast.LENGTH_SHORT);
+                //printToast("Waiting for others' response...",Toast.LENGTH_SHORT);
+                //this.mainActivity.updateView();
                 return "ok";
         }
 
@@ -224,7 +230,8 @@ public class GameLogic {
                         this.mainActivity.updateView();
                         return "ok";
                 }
-                else{
+                else{ // if i want to nope another card
+
                         return "ok";
                 }
         }
@@ -402,6 +409,21 @@ public class GameLogic {
                         }
                 }
                 this.playersCards.set(playId, list);
+        }
+
+        /**
+         * Set all players to RESPONSE except the one which is PENDING
+         * @param playId the player id to put at PENDING
+         */
+        private void setAllPlayersResponseExceptOnePending(int playId){
+                for(int i = 0; i < getNbPlayers(); i++){
+                        if(i == playId){
+                                this.playersStates.set(i, PENDING);
+                        }
+                        else{
+                                this.playersStates.set(i, RESPONSE);
+                        }
+                }
         }
 
         /**
