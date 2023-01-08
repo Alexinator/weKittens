@@ -36,10 +36,11 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
     // AT attributes
     private static IAT iat;
     private static final int _ASSET_INSTALLER_ = 0;
-    // static so we can easily use it in MainActivity (TODO change)
+    // static so we can easily use it in MainActivity
     public static ATWeKittens atws;
 
-    private ArrayList<String> players;
+    private ArrayList<String> players; // players' names
+    private ArrayList<Integer> playersId; // players' ids (useful for removal)
     private ListView listView;
     private ArrayAdapter<String> adapter;
     // allow us to know if the player has started the game
@@ -59,6 +60,7 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
         }
 
         players = new ArrayList<>();
+        playersId = new ArrayList<>();
         listView = (ListView)findViewById(R.id.players);
         adapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, players);
         listView.setAdapter(adapter);
@@ -110,11 +112,12 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
      * @param newPlayer: the new player's name
      */
     @Override
-    public void foundNewPlayer(String newPlayer){
+    public void foundNewPlayer(String newPlayer, Integer playerId){
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 printToast("New player found ! "+newPlayer, Toast.LENGTH_SHORT);
+                playersId.add(playerId);
                 adapter.add(newPlayer);
                 adapter.notifyDataSetChanged();
                 if(players.size() >= 2){
@@ -123,6 +126,29 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
                     Button startGame = (Button)findViewById(R.id.startgame);
                     startGame.setVisibility(View.VISIBLE);
                     startGame.setEnabled(true);
+                }
+            }
+        });
+    }
+
+    /**
+     * Used to remove a player from the lobby
+     * @param playerId player's id
+     */
+    @Override
+    public void removePlayerFromLobby(int playerId){
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                int i = playersId.indexOf(playerId)+1; // at index 0, I have my first other player in adapter (so +1)
+                System.out.println("Remove from lobby player "+i);
+                System.out.println(adapter.getItem(i));
+                adapter.remove(adapter.getItem(i));
+                adapter.notifyDataSetChanged();
+                if(players.size() < 2){ // hide the button
+                    Button startGame = (Button)findViewById(R.id.startgame);
+                    startGame.setVisibility(View.INVISIBLE);
+                    startGame.setEnabled(false);
                 }
             }
         });
@@ -174,7 +200,6 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
         intent.putExtra("bundle",bundle);
         startActivity(intent);
     }
-
 
     // ############
     // ##   AT   ##
@@ -265,6 +290,11 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
         });
     }
 
+    /**
+     * Handle when a player disconnect from the game
+     * Call the GameLogic class
+     * @param playerId the player's id
+     */
     @Override
     public void playerDisconnected(int playerId){
         runOnUiThread(new Runnable() {
@@ -275,6 +305,10 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
         });
     }
 
+    /**
+     * After 30 seconds, remove the player from the game
+     * @param playerId the player's id to remove from the game
+     */
     @Override
     public void removePlayerFromGame(int playerId){
         runOnUiThread(new Runnable() {

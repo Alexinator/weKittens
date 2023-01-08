@@ -14,6 +14,7 @@ def makeWeKittens(myUserId := /.at.support.util.randomNumberBetween(0,125)) {
   def otherPlayersIds := []; // stores other players ids
   def playerName := "EMPTY PLAYER NAME";
   def playerId;
+  def gameHasStarted := false;
 
   def game; // current game state
   def tuples; // tuple space, useful to keep track of cards played during the game
@@ -39,6 +40,7 @@ def makeWeKittens(myUserId := /.at.support.util.randomNumberBetween(0,125)) {
     };
 
     def startGame(){
+        gameHasStarted := true;
         playerId := 0;
         currentRound := -1;
         game := jlobby.edu.vub.at.wekittens.GameLogic.new(playerId, otherPlayers.length+1, myUserId, otherPlayersIds);
@@ -95,6 +97,7 @@ def makeWeKittens(myUserId := /.at.support.util.randomNumberBetween(0,125)) {
     };
 
     def startGame(id,deck,playersCards,playerStates,nbPlayers,playerIdsList){
+        gameHasStarted := true;
         tuples := makeTupleSpace();
         tuples.goOnline();
         playerId := id;
@@ -114,36 +117,52 @@ def makeWeKittens(myUserId := /.at.support.util.randomNumberBetween(0,125)) {
   	// setup peer-to-peer service discovery
   	log("Going online, waiting for new players to connect");
 
+  	//TODO add when a game start, do not accept new connection !! (simple boolean value)
+
   	whenever: remotePlayer discovered: { |player| //when a new player is discovered
-  	    if: !otherPlayers.contains(player) then: { //if new player
-  	        log("New player found: " + player);
-            when: player<-getPlayerName()@FutureMessage becomes:{|name| //wait to retrieve player's name
-                when: player<-getMyUserId()@FutureMessage becomes:{|id|
-  	                otherPlayers := otherPlayers + [player]; // when we have the player
-                    otherPlayersIds := otherPlayersIds + [id]; // save their ids
-                    gui.foundNewPlayer(name); // only when we have the far reference + id call the gui (to keep list order)
-                    // TODO OK juste trop de deco / reco wifi pourri
-                    whenever: player disconnected: {
-                        if: (id != myUserId) then: {
-                            log("Player "+ id + " disconnected !");
-                            gui.playerDisconnected(id);
-                            when: player<-getMyUserId()@Due(30.seconds) becomes: {|i| // player has 30 seconds to come back
-                                log("Player "+i+" is back !");
-                            } catch: TimeoutException using:{ |e|
-                                log("Player "+id+" will never come back, removing him from game");
-                                gui.removePlayerFromGame(id);
+  	    if: gameHasStarted then: {
+  	        log("Game has started, you cannot join :(");
+  	    } else: {
+            if: !otherPlayers.contains(player) then: { //if new player
+                log("New player found: " + player);
+                when: player<-getPlayerName()@FutureMessage becomes:{|name| //wait to retrieve player's name
+                    when: player<-getMyUserId()@FutureMessage becomes:{|id|
+                        otherPlayers := otherPlayers + [player]; // when we have the player
+                        otherPlayersIds := otherPlayersIds + [id]; // save their ids
+                        gui.foundNewPlayer(name,id); // only when we have the far reference + id call the gui (to keep list order)
+                        // TODO OK juste trop de deco / reco wifi pourri
+                        whenever: player disconnected: {
+                            if: (id != myUserId) then: {
+                                if: gameHasStarted then: { // if game has started, wait 30 seconds before come back
+                                    log("Player "+ id + " disconnected !");
+                                    gui.playerDisconnected(id);
+                                    when: player<-getMyUserId()@Due(30.seconds) becomes: {|i| // player has 30 seconds to come back
+                                        log("Player "+i+" is back !");
+                                    } catch: TimeoutException using:{ |e|
+                                        log("Player "+id+" will never come back, removing him from game");
+                                        gui.removePlayerFromGame(id);
+                                    };
+                                } else: { // game has not started, simply remove from lobby
+                                        log("Remove player "+id+" from lobby");
+                                        gui.removePlayerFromLobby(id);
+                                };
+
                             };
                         };
-                    };
 
-                    whenever: player reconnected: {
-                        if: (id != myUserId) then: {
-                            log("Reconnected player "+id);
+                        whenever: player reconnected: {
+                            if: (id != myUserId) then: {
+                                if: gameHasStarted == false then: { // if game has not started, add player to lobby
+                                    gui.foundNewPlayer(name,id);
+                                };
+                                log("Reconnected player "+id);
+                            };
                         };
                     };
                 };
             };
   	    };
+
   	};
 
 

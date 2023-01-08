@@ -13,7 +13,7 @@ public interface JWeKittens {
 
     JWeKittens registerATApp(ATWeKittens weKittens);
 
-    public void foundNewPlayer(String newPlayer);
+    public void foundNewPlayer(String newPlayer, Integer playerId);
 
     public void startGameAT(int playerId, List<Integer> deck, List<List<Integer>> playersCards, List<Integer> playersStates, int nbPlayers, List<Integer> playersIdsList);
 
@@ -22,4 +22,6 @@ public interface JWeKittens {
     public void playerDisconnected(int playerId);
 
     public void removePlayerFromGame(int playerId);
+
+    public void removePlayerFromLobby(int player);
 }

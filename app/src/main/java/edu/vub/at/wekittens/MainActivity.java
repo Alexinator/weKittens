@@ -288,14 +288,19 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         return true;
     }
 
+    /**
+     * Used for a favor card
+     * Needed method because tricky to handle
+     * @param playId the player is to ask a favor to
+     */
     private void actionOnPlayer(int playId){
-        if(favorCardUsed){ //TODO le reste
+        if(favorCardUsed){
             String returnMessage = this.gameLogic.playCard(lastCard, this.playerId, playId);
             if(!returnMessage.equals("ok")){
                 printToast(returnMessage,Toast.LENGTH_LONG);
                 return; // player must choose a valid victim
             }
-            favorCardUsed = false; // todo check if we can use on this player
+            favorCardUsed = false;
         }
     }
 
@@ -430,6 +435,10 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         button.setText(name);
     }
 
+    /**
+     * Change the MainActivity to EndScreenActivity
+     * @param winner the winner's id
+     */
     public void changeEndGame(int winner){
         Intent intent = new Intent(this,EndScreen.class);
         Bundle bundle = new Bundle();
