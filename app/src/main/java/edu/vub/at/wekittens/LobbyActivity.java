@@ -145,6 +145,8 @@ public class LobbyActivity extends AppCompatActivity implements JWeKittens {
                 System.out.println(adapter.getItem(i));
                 adapter.remove(adapter.getItem(i));
                 adapter.notifyDataSetChanged();
+                TextView tv = (TextView)findViewById(R.id.textView2);
+                tv.setText("Lobby - "+adapter.getCount()+" player(s)");
                 if(players.size() < 2){ // hide the button
                     Button startGame = (Button)findViewById(R.id.startgame);
                     startGame.setVisibility(View.INVISIBLE);

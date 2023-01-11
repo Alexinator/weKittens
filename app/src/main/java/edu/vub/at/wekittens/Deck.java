@@ -140,7 +140,7 @@ public class Deck {
         addCard(deck, CardType.attack, "mine", 2, 1);
         addCard(deck, CardType.attack, "space", 2,2);
 
-        //Defuse
+        //Defuse - to not add defuse yet
         addCard(deck, CardType.defuse, "banjo", 2,3);
         addCard(deck, CardType.defuse, "catnip", 2,4);
         addCard(deck, CardType.defuse, "laser", 2,5);
