@@ -21,7 +21,7 @@ public class GameLogic {
         private ATWeKittens atws = LobbyActivity.atws;
         private MainActivity mainActivity = null;
 
-        public static int TOTAL_HAND_CARDS = 1; //maximum 8 cards per hand //TODO DEBUG
+        public static int TOTAL_HAND_CARDS = 8; //maximum 8 cards per hand
         public static int ALIVE = 1; // player is alive
         public static int DEAD = 2; // player is dead
         public static int PLAY = 3; // player's time to play
@@ -119,24 +119,34 @@ public class GameLogic {
                 this.playersCards = new ArrayList<>(nbPlayers); // create a list to save cards
                 for(int i = 0; i < nbPlayers; i++){
                         this.playersCards.add(new ArrayList<>(TOTAL_HAND_CARDS)); // for each player, initialise his cards list
-                        //TODO debug
-                        //for(int j = 0; j < TOTAL_HAND_CARDS-1; j++){
-                        //        this.playersCards.get(i).add(this.deck.drawCard().getId()); // add a random card to player's cards
-                        //}
-                        //this.playersCards.get(i).add(this.deck.takeCard(Card.CardType.defuse).getId()); // add a defuse card (rules)
+                        for(int j = 0; j < TOTAL_HAND_CARDS-1; j++){
+                                this.playersCards.get(i).add(this.deck.drawCard().getId()); // add a random card to player's cards
+                        }
+                        this.playersCards.get(i).add(this.deck.takeCard(Card.CardType.defuse).getId()); // add a defuse card (rules)
 
-                        this.playersCards.get(i).add(0); // nope
-                        this.playersCards.get(i).add(1); // attack
-                        this.playersCards.get(i).add(3); // defuse
-                        this.playersCards.get(i).add(6); // cat
-                        this.playersCards.get(i).add(11); // future
-                        this.playersCards.get(i).add(16); // favor
-                        this.playersCards.get(i).add(17); // skip
-                        this.playersCards.get(i).add(20); // shuffle
+                        // DEBUG
+                        //this.playersCards.get(i).add(0); // nope
+                        //this.playersCards.get(i).add(1); // attack
+                        //this.playersCards.get(i).add(3); // defuse
+                        //this.playersCards.get(i).add(6); // cat
+                        //this.playersCards.get(i).add(11); // future
+                        //this.playersCards.get(i).add(16); // favor
+                        //this.playersCards.get(i).add(17); // skip
+                        //this.playersCards.get(i).add(20); // shuffle
 
                         // in total 8 cards have been added to his hand
                 }
+                if(nbPlayers == 2 || nbPlayers == 3){
+                        this.deck.addCardToDeck(3); // add defuse to the deck (rules)
+                        this.deck.addCardToDeck(3); // add defuse to the deck (rules)
+                }
+                else if(nbPlayers == 4){
+                        this.deck.addCardToDeck(3); // add defuse to the deck (rules)
+                        this.deck.addCardToDeck(3); // add defuse to the deck (rules)
+                        this.deck.addCardToDeck(3); // add defuse to the deck (rules)
+                }
                 this.deck.addExplodingKittens(); // add exploding kittens based on the number of players (rules)
+
 
                 playersStates = new ArrayList<>(nbPlayers); // now define the state of each player
                 this.playersStates.add(this.playerId,PLAY); // starter is the first player

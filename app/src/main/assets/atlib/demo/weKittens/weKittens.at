@@ -117,8 +117,6 @@ def makeWeKittens(myUserId := /.at.support.util.randomNumberBetween(0,125)) {
   	// setup peer-to-peer service discovery
   	log("Going online, waiting for new players to connect");
 
-  	//TODO add when a game start, do not accept new connection !! (simple boolean value)
-
   	whenever: remotePlayer discovered: { |player| //when a new player is discovered
   	    if: gameHasStarted then: {
   	        log("Game has started, you cannot join :(");
