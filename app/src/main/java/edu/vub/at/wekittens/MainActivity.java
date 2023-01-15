@@ -456,5 +456,13 @@ public class MainActivity extends AppCompatActivity implements HandAction {
         Toast.makeText(getApplicationContext(),message,duration).show();
     }
 
+    /**
+     * Handle back button pressed during the game
+     */
+    @Override
+    public void onBackPressed() {
+        // to nothing
+    }
+
 
 }
