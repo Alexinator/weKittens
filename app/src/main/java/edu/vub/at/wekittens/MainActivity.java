@@ -461,7 +461,7 @@ public class MainActivity extends AppCompatActivity implements HandAction {
      */
     @Override
     public void onBackPressed() {
-        // to nothing
+        // do nothing
     }
 
 
